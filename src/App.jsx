@@ -621,7 +621,17 @@ export default function App() {
             <strong>BharatSHIELD</strong>
           </div>
           {navItems.map((item) => (
-            <button className={activeSection === item ? "nav-active" : ""} key={item} onClick={() => setActiveSection(item)}>{item}</button>
+            <button
+              className={activeSection === item ? "nav-active" : ""}
+              key={item}
+              type="button"
+              onClick={() => {
+                setActiveSection(item);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            >
+              {item}
+            </button>
           ))}
           <button className="logout" onClick={logout}>Logout</button>
         </aside>
@@ -633,25 +643,25 @@ export default function App() {
               <p>Stay alert, stay safe from digital scams.</p>
             </div>
             <div className="header-icons">
-              <span>3</span>
-              <div />
+              <button type="button">3 alerts</button>
+              <button type="button">{(session.user?.name || "User").slice(0, 1).toUpperCase()}</button>
             </div>
           </header>
 
-          <section className="stat-strip">
+          <section className={activeSection === "Dashboard" ? "stat-strip" : "stat-strip section-hidden"}>
             <div><span>Safety Score</span><strong>{safetyScore}</strong><small>Higher is safer</small></div>
-            <div><span>I4C Protected</span><strong>₹11,158 Cr</strong><small>Till Jun 2026</small></div>
+            <div><span>I4C Protected</span><strong>INR 11,158 Cr</strong><small>Till Jun 2026</small></div>
             <div><span>Weekly Risk Trend</span><strong>{score >= 70 ? "Rising" : "Stable"}</strong><small>Based on scan history</small></div>
             <div><span>Latest Scam Alert</span><strong>Digital Arrest</strong><small>2026 I4C priority</small></div>
           </section>
 
-          <section className="activity-strip">
+          <section className={activeSection === "Dashboard" ? "activity-strip" : "activity-strip section-hidden"}>
             {recentActivity.map((item, index) => (
               <div key={item} className={index % 2 ? "activity-warn" : "activity-safe"}>{item}</div>
             ))}
           </section>
 
-          <section className="quick-actions">
+          <section className={activeSection === "Dashboard" || activeSection === "Scan" ? "quick-actions" : "quick-actions section-hidden"}>
             {modes.slice(0, 4).map(([id, label]) => (
               <button className={mode === id ? "quick-card active" : "quick-card"} key={id} onClick={() => selectMode(id)}>
                 <span>{id === "sms" ? "MSG" : id === "qr" ? "QR" : id === "url" ? "WEB" : "!"}</span>
@@ -661,7 +671,7 @@ export default function App() {
             ))}
           </section>
 
-          <section className="main-grid">
+          <section className={activeSection === "Scan" ? "main-grid" : "main-grid section-hidden"}>
             <div className="left-stack">
               <section className="scan-card">
                 <div className="mode-row">
@@ -817,7 +827,7 @@ export default function App() {
             </aside>
           </section>
 
-          <section className="explain-grid">
+          <section className={activeSection === "Scan" ? "explain-grid" : "explain-grid section-hidden"}>
             <div className="glass">
               <h2>Reason Breakdown</h2>
               <div className="reason-list">
@@ -861,7 +871,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="intel-grid">
+          <section className={activeSection === "Dashboard" ? "intel-grid" : "intel-grid section-hidden"}>
             <div className="glass">
               <h2>Today&apos;s Threat Level</h2>
               <strong className="big-status">{result?.risk || "Medium"}</strong>
@@ -890,7 +900,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="lower-grid">
+          <section className={activeSection === "Dashboard" ? "lower-grid" : "lower-grid section-hidden"}>
             <div className="glass">
               <h2>Threat Trends</h2>
               <div className="bars">
@@ -942,7 +952,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="ecosystem-panel">
+          <section className={activeSection !== "Dashboard" && activeSection !== "Scan" ? "ecosystem-panel" : "ecosystem-panel section-hidden"}>
             {activeSection === "Report Scam" && (
               <>
                 <div className="section-head wide-head">

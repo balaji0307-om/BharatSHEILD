@@ -469,6 +469,10 @@ h2 {
     #eef4fb;
 }
 
+.section-hidden {
+  display: none !important;
+}
+
 .stat-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));
@@ -553,22 +557,27 @@ h2 {
   gap: 14px;
 }
 
-.header-icons span {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #e94f4f;
-  color: #fff;
-  font-weight: 900;
+.header-icons button {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+  border-color: #d7e3ef;
+  border-radius: 999px;
+  background: #fff;
+  color: #182b3f;
+  box-shadow: 0 12px 24px rgba(30, 56, 93, 0.08);
 }
 
-.header-icons div {
+.header-icons button:first-child {
+  background: #fff0f2;
+  color: #c42f43;
+}
+
+.header-icons button:last-child {
   width: 48px;
-  height: 48px;
-  border-radius: 50%;
+  padding: 0;
   background: linear-gradient(135deg, #dbe9ff, #91aff0);
+  color: #0b2446;
 }
 
 .quick-actions {
