@@ -848,6 +848,29 @@ textarea:focus {
   color: #145bc6;
 }
 
+.scan-permission {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d7e3ef;
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: #f8fbff;
+  cursor: pointer;
+}
+
+.scan-permission input {
+  width: 16px;
+  height: 16px;
+  accent-color: #25c993;
+}
+
+.scan-permission strong {
+  color: #182b3f;
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
 .upload-panel,
 .url-panel {
   display: grid;
@@ -1195,7 +1218,7 @@ mark.danger {
 
 .india-map svg {
   width: min(300px, 92%);
-  height: 100%;
+  height: calc(100% - 22px);
   overflow: visible;
 }
 
@@ -1223,16 +1246,29 @@ mark.danger {
 }
 
 .map-point text {
-  font-size: 0.74rem;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.88);
+  stroke-width: 3px;
+  font-size: 0.68rem;
   font-weight: 900;
   color: #142233;
   fill: #142233;
 }
 
 .city-label {
-  font-size: 0.58rem;
+  font-size: 0.52rem;
   font-weight: 800;
   fill: #607588;
+}
+
+.map-source {
+  position: absolute;
+  left: 14px;
+  bottom: 8px;
+  margin: 0;
+  color: #607588;
+  font-size: 0.72rem;
+  font-weight: 800;
 }
 
 .modal-backdrop {
