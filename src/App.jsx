@@ -42,9 +42,9 @@ const modeMeta = {
 };
 
 const threatIntel = [
-  ["Money saved", "INR 11,158 Cr", "I4C till Jun 2026"],
-  ["Complaints helped", "32.80 lakh", "CFCFRMS"],
-  ["Financial fraud complaints", "53.87 lakh", "FY 2023-24 to 2025-26"],
+  ["Money protected", "INR 11,158 Cr", "Latest public update"],
+  ["People assisted", "32.80 lakh", "Complaint support"],
+  ["Fraud complaints", "53.87 lakh", "Recent period"],
   ["Helpline", "1930", "Active nationwide"],
 ];
 
@@ -120,7 +120,7 @@ const platformRoadmap = [
   ["Community Reputation", "Reported count, last seen, duplicate scam DNA"],
 ];
 
-const trustChecks = ["HTTPS Secured", "Data Encrypted", "API Protected", "Privacy Protected", "AI Explainability", "Open Source Ready"];
+const trustChecks = ["HTTPS Secured", "Data Encrypted", "API Protected", "Privacy Protected", "Explainable Results"];
 const deniedPermissions = ["Contacts", "Photos", "Location", "OTP", "Passwords", "Background microphone"];
 const autoDeleteOptions = ["30 Minutes", "1 Hour", "24 Hours", "Never"];
 const allowedEvidence = [".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp3", ".wav", ".m4a"];
@@ -716,7 +716,7 @@ export default function App() {
           <header className="welcome-row">
             <div>
               <h1>{activeSection === "Dashboard" ? `Welcome, ${session.user?.name || "User"}!` : activeSection}</h1>
-              <p>{activeSection === "Dashboard" ? "Stay alert, stay safe from digital scams." : "BharatSHIELD digital safety workspace."}</p>
+              <p>{activeSection === "Dashboard" ? "Stay alert, stay safe from digital scams." : "Manage your digital safety here."}</p>
             </div>
             <div className="header-icons">
               <button type="button">3 alerts</button>
@@ -726,9 +726,9 @@ export default function App() {
 
           <section className={activeSection === "Dashboard" ? "stat-strip" : "stat-strip section-hidden"}>
             <div><span>Safety Score</span><strong>{safetyScore}</strong><small>Higher is safer</small></div>
-            <div><span>I4C Protected</span><strong>INR 11,158 Cr</strong><small>Till Jun 2026</small></div>
+            <div><span>Money Protected</span><strong>INR 11,158 Cr</strong><small>Latest public update</small></div>
             <div><span>Weekly Risk Trend</span><strong>{score >= 70 ? "Rising" : "Stable"}</strong><small>Based on scan history</small></div>
-            <div><span>Latest Scam Alert</span><strong>Digital Arrest</strong><small>2026 I4C priority</small></div>
+            <div><span>Latest Scam Alert</span><strong>Digital Arrest</strong><small>High priority</small></div>
           </section>
 
           <section className={activeSection === "Dashboard" ? "activity-strip" : "activity-strip section-hidden"}>
@@ -969,7 +969,7 @@ export default function App() {
             <div className="glass">
               <h2>Financial Fraud Shield</h2>
               <strong className="big-status">32.80L</strong>
-              <p>CFCFRMS complaints helped till Jun 2026.</p>
+              <p>Complaints supported till Jun 2026.</p>
             </div>
             <div className="glass">
               <div className="section-head">
@@ -1029,7 +1029,7 @@ export default function App() {
                     </g>
                   ))}
                 </svg>
-                <p className="map-source">2026 regional alert index for presentation</p>
+                <p className="map-source">Regional scam alert index</p>
               </div>
             </div>
 
@@ -1070,10 +1070,10 @@ export default function App() {
                     <div className="intel-list">{guardianSignals.map(([name, value, detail]) => <div key={name}><span>{name}</span><strong>{value}</strong><small>{detail}</small></div>)}</div>
                   </div>
                   <div className="glass">
-                    <h2>Scam DNA</h2>
+                    <h2>Scam Match</h2>
                     <div className="dna-box">BS-DNA-91F2-A8C7</div>
-                    <p>Fingerprint combines URL, keywords, brand similarity, intent, redirect path, and visual clues to find duplicate scams.</p>
-                    <div className="trust-list"><span>SHA256 Fingerprint</span><span>Brand: SBI</span><span>Intent: OTP Theft</span><span>Duplicate Ready</span></div>
+                    <p>This scam pattern matches a fake banking login and OTP theft attempt.</p>
+                    <div className="trust-list"><span>Fake Bank Login</span><span>OTP Theft</span><span>Duplicate Scam</span></div>
                   </div>
                 </div>
                 <div className="ecosystem-grid">
@@ -1089,7 +1089,7 @@ export default function App() {
                     <div className="secure-note">File automatically deleted after analysis.</div>
                   </div>
                   <div className="glass">
-                    <h2>Integration Roadmap</h2>
+                    <h2>Available Protections</h2>
                     <div className="roadmap-list">{platformRoadmap.map(([title, detail]) => <div key={title}><strong>{title}</strong><p>{detail}</p></div>)}</div>
                   </div>
                 </div>
@@ -1124,7 +1124,7 @@ export default function App() {
                   <div className="glass">
                     <h2>Complaint Summary</h2>
                     <p>{complaintSummary}</p>
-                    <div className="secure-note">Scam ID: {incidentId} | SHA256-style fingerprint ready</div>
+                    <div className="secure-note">Report ID: {incidentId}</div>
                     <div className="toolrow compact-actions">
                       <button className="primary" onClick={downloadComplaint}>Download Complaint</button>
                       <button onClick={openCyberPortal}>Report Officially</button>
@@ -1156,7 +1156,7 @@ export default function App() {
                     <h2>Can you identify this scam?</h2>
                     <p>"Your bank account will be blocked. Share OTP now."</p>
                     <div className="pill-grid"><button>Safe</button><button className="active">Scam</button><button>Not Sure</button></div>
-                    <p className="secure-note">Correct: Scam. Government safety guidance recommends never sharing OTP, PIN, password, or approving unknown payment requests.</p>
+                    <p className="secure-note">Correct: Scam. Never share OTP, PIN, password, or approve unknown payment requests.</p>
                   </div>
                 </div>
               </>
@@ -1185,7 +1185,7 @@ export default function App() {
 
             {activeSection === "Live Scam Alerts" && (
               <>
-                <div className="section-head wide-head"><h2>Live Scam Alerts</h2><button>Latest 2026 Update</button></div>
+                <div className="section-head wide-head"><h2>Live Scam Alerts</h2><button>Latest Alerts</button></div>
                 <div className="alerts-grid">
                   {liveAlerts.map(([title, risk, region, tip]) => (
                     <div className="glass alert-card" key={title}>
@@ -1237,17 +1237,17 @@ export default function App() {
                 </div>
                 <div className="ecosystem-grid settings-wide">
                   <div className="glass">
-                    <h2>Permission Checker</h2>
+                    <h2>Privacy Permissions</h2>
                     <p>BharatSHIELD does not request these permissions for scanning:</p>
                     <div className="permission-grid">{deniedPermissions.map((item) => <span key={item}>No {item}</span>)}</div>
                   </div>
                   <div className="glass">
-                    <h2>Secure Upload Policy</h2>
+                    <h2>Safe Uploads</h2>
                     <p>Allowed files: jpg, png, pdf, txt, mp3, wav, m4a. Executables, APKs, batch files, and zip archives are blocked.</p>
                     <p className="secure-note">Files are reviewed locally in the browser flow and marked for deletion after {autoDelete}.</p>
                   </div>
                   <div className="glass">
-                    <h2>Trust Badge</h2>
+                    <h2>Protection Status</h2>
                     <div className="trust-list">{trustChecks.map((item) => <span key={item}>{item}</span>)}</div>
                   </div>
                 </div>
