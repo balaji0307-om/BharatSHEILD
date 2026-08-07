@@ -639,8 +639,8 @@ export default function App() {
         <section className="dashboard-shell">
           <header className="welcome-row">
             <div>
-              <h1>Welcome, {session.user?.name || "User"}!</h1>
-              <p>Stay alert, stay safe from digital scams.</p>
+              <h1>{activeSection === "Dashboard" ? `Welcome, ${session.user?.name || "User"}!` : activeSection}</h1>
+              <p>{activeSection === "Dashboard" ? "Stay alert, stay safe from digital scams." : "BharatSHIELD digital safety workspace."}</p>
             </div>
             <div className="header-icons">
               <button type="button">3 alerts</button>
@@ -661,7 +661,7 @@ export default function App() {
             ))}
           </section>
 
-          <section className={activeSection === "Dashboard" || activeSection === "Scan" ? "quick-actions" : "quick-actions section-hidden"}>
+          <section className={activeSection === "Dashboard" ? "quick-actions" : "quick-actions section-hidden"}>
             {modes.slice(0, 4).map(([id, label]) => (
               <button className={mode === id ? "quick-card active" : "quick-card"} key={id} onClick={() => selectMode(id)}>
                 <span>{id === "sms" ? "MSG" : id === "qr" ? "QR" : id === "url" ? "WEB" : "!"}</span>
@@ -998,7 +998,7 @@ export default function App() {
                   ))}
                   <div className="glass quiz-card">
                     <h2>Can you identify this scam?</h2>
-                    <p>“Your bank account will be blocked. Share OTP now.”</p>
+                    <p>"Your bank account will be blocked. Share OTP now."</p>
                     <div className="pill-grid"><button>Safe</button><button className="active">Scam</button><button>Not Sure</button></div>
                   </div>
                 </div>

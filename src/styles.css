@@ -463,6 +463,7 @@ h2 {
 }
 
 .dashboard-shell {
+  min-height: 100vh;
   padding: 28px;
   background:
     radial-gradient(circle at 82% 8%, rgba(29, 99, 233, 0.08), transparent 28%),
@@ -554,12 +555,12 @@ h2 {
 .header-icons {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
 }
 
 .header-icons button {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 42px;
+  min-height: 42px;
   justify-content: center;
   border-color: #d7e3ef;
   border-radius: 999px;
@@ -569,12 +570,13 @@ h2 {
 }
 
 .header-icons button:first-child {
+  padding: 0 14px;
   background: #fff0f2;
   color: #c42f43;
 }
 
 .header-icons button:last-child {
-  width: 48px;
+  width: 46px;
   padding: 0;
   background: linear-gradient(135deg, #dbe9ff, #91aff0);
   color: #0b2446;
