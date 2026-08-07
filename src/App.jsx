@@ -196,6 +196,7 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [audioFileName, setAudioFileName] = useState("");
   const [error, setError] = useState("");
   const recognitionRef = useRef(null);
 
@@ -233,6 +234,8 @@ export default function App() {
   function selectMode(nextMode) {
     setMode(nextMode);
     setContent(samples[nextMode] || "");
+    setAudioFileName("");
+    setError("");
   }
 
   async function runAnalysis(input = content, channel = mode) {
@@ -325,6 +328,14 @@ export default function App() {
     recognitionRef.current = null;
   }
 
+  function handleAudioUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setMode("call");
+    setAudioFileName(file.name);
+    setError("Recording selected. Use live voice capture or paste the transcript below for analysis.");
+  }
+
   function clearHistory() {
     setHistory([]);
     saveHistory([]);
@@ -367,6 +378,10 @@ export default function App() {
     "Verify through the official app or website by typing the address yourself.",
   ];
   const currentMode = modeMeta[mode] || modeMeta.whatsapp;
+  const isQrMode = mode === "qr";
+  const isCallMode = mode === "call";
+  const isUrlMode = mode === "url";
+  const isTextMode = !isQrMode && !isCallMode && !isUrlMode;
 
   return (
     <>
@@ -512,12 +527,77 @@ export default function App() {
                   </div>
 
                   <div className="input-console">
-                    <textarea value={content} onChange={(event) => setContent(event.target.value)} spellCheck="false" />
+                    <div className="input-head">
+                      <span>{currentMode.title}</span>
+                      <strong>{isQrMode ? "Image upload" : isCallMode ? "Call recording" : isUrlMode ? "Website link" : "Paste content"}</strong>
+                    </div>
+
+                    {isQrMode && (
+                      <div className="upload-panel qr-upload">
+                        <label>
+                          <input type="file" accept="image/*" onChange={scanQr} />
+                          <span>QR</span>
+                          <strong>Upload QR image</strong>
+                          <small>PNG, JPG, or screenshot</small>
+                        </label>
+                        <textarea
+                          className="compact-input"
+                          value={content}
+                          onChange={(event) => setContent(event.target.value)}
+                          spellCheck="false"
+                          placeholder="Decoded QR content will appear here"
+                        />
+                      </div>
+                    )}
+
+                    {isCallMode && (
+                      <div className="upload-panel call-upload">
+                        <label>
+                          <input type="file" accept="audio/*" onChange={handleAudioUpload} />
+                          <span>REC</span>
+                          <strong>{audioFileName || "Upload call recording"}</strong>
+                          <small>MP3, WAV, M4A, or use live voice</small>
+                        </label>
+                        <div className="voice-actions">
+                          <button onClick={startVoice}>Start Voice</button>
+                          <button onClick={stopVoice}>Stop</button>
+                        </div>
+                        <textarea
+                          className="compact-input"
+                          value={content}
+                          onChange={(event) => setContent(event.target.value)}
+                          spellCheck="false"
+                          placeholder="Paste or capture call transcript"
+                        />
+                      </div>
+                    )}
+
+                    {isUrlMode && (
+                      <div className="url-panel">
+                        <input
+                          type="url"
+                          value={content}
+                          onChange={(event) => setContent(event.target.value)}
+                          placeholder="https://example.com"
+                          spellCheck="false"
+                        />
+                        <small>Paste the full website link for domain and risk checks.</small>
+                      </div>
+                    )}
+
+                    {isTextMode && (
+                      <textarea
+                        value={content}
+                        onChange={(event) => setContent(event.target.value)}
+                        spellCheck="false"
+                        placeholder="Paste SMS, WhatsApp message, email, job offer, investment pitch, or news forward"
+                      />
+                    )}
+
                     <div className="toolrow">
                       <button className="primary" onClick={() => runAnalysis()} disabled={loading}>{loading ? "Scanning..." : "Analyze Threat"}</button>
-                      <label className="file-button">Scan QR Image<input type="file" accept="image/*" onChange={scanQr} /></label>
-                      <button onClick={startVoice}>Start Voice</button>
-                      <button onClick={stopVoice}>Stop</button>
+                      {!isQrMode && <button onClick={() => selectMode("qr")}>Scan QR</button>}
+                      {!isCallMode && <button onClick={() => selectMode("call")}>Call Review</button>}
                       <button onClick={() => setShowReport(true)}>Cyber Report</button>
                     </div>
                     {error && <p className="error">{error}</p>}

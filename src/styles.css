@@ -831,6 +831,103 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(45, 123, 234, 0.1);
 }
 
+.input-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.input-head span {
+  color: #607588;
+  font-weight: 800;
+}
+
+.input-head strong {
+  color: #145bc6;
+}
+
+.upload-panel,
+.url-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.upload-panel label {
+  min-height: 168px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+  border: 1px dashed #8bb8ef;
+  border-radius: 8px;
+  text-align: center;
+  background:
+    linear-gradient(135deg, rgba(29, 99, 233, 0.08), rgba(37, 201, 147, 0.08)),
+    #f8fbff;
+  cursor: pointer;
+}
+
+.upload-panel label input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.upload-panel label span {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: #e8f2ff;
+  color: #145bc6;
+  font-weight: 900;
+}
+
+.call-upload label span {
+  background: #fff0ec;
+  color: #c94925;
+}
+
+.upload-panel label small,
+.url-panel small {
+  color: #607588;
+  font-weight: 700;
+}
+
+.compact-input {
+  min-height: 116px;
+}
+
+.voice-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.url-panel input {
+  width: 100%;
+  min-height: 64px;
+  border: 1px solid #d7e3ef;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #182b3f;
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 800;
+  outline: none;
+}
+
+.url-panel input:focus {
+  border-color: #2d7bea;
+  box-shadow: 0 0 0 3px rgba(45, 123, 234, 0.1);
+}
+
 .file-button {
   display: inline-flex;
   align-items: center;
