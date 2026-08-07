@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from time import time
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -95,6 +97,31 @@ def make_token() -> str:
 
 
 init_db()
+
+RATE_LIMIT_WINDOW = 60
+RATE_LIMIT_MAX = 30
+request_log: dict[str, list[float]] = {}
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    client = request.client.host if request.client else "unknown"
+    now = time()
+    hits = [hit for hit in request_log.get(client, []) if now - hit < RATE_LIMIT_WINDOW]
+    if len(hits) >= RATE_LIMIT_MAX:
+        return JSONResponse({"detail": "Too many requests. Please try again shortly."}, status_code=429)
+    hits.append(now)
+    request_log[client] = hits
+
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 SUSPICIOUS_KEYWORDS = {

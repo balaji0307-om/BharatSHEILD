@@ -517,6 +517,35 @@ h2 {
   margin: 14px 0 22px;
 }
 
+.trust-strip {
+  margin: 18px 0 4px;
+}
+
+.trust-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.75fr) 1.25fr;
+  align-items: center;
+  gap: 16px;
+}
+
+.trust-list,
+.permission-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.trust-list span,
+.permission-grid span,
+.secure-note {
+  border-radius: 999px;
+  padding: 8px 11px;
+  background: #ecfff8;
+  color: #15966c;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
 .activity-strip div {
   border: 1px solid #dfe8f1;
   border-radius: 8px;
@@ -1045,7 +1074,7 @@ textarea:focus {
 }
 
 .library-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .alerts-grid {
@@ -1127,6 +1156,102 @@ textarea:focus {
   color: #607588;
   font-style: normal;
   font-weight: 800;
+}
+
+.library-card {
+  display: grid;
+  gap: 12px;
+}
+
+.library-card ul,
+.sos-panel ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.library-card li,
+.sos-panel li {
+  margin: 6px 0;
+  color: #33495f;
+}
+
+.evidence-upload {
+  display: grid;
+  gap: 6px;
+  border: 1px dashed #8bb8ef;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fbff;
+  cursor: pointer;
+}
+
+.evidence-upload input {
+  display: none;
+}
+
+.evidence-upload small {
+  color: #607588;
+  font-weight: 700;
+}
+
+.sos-panel {
+  margin-top: 18px;
+  border-color: #ffc4cc;
+  background: linear-gradient(135deg, #fff, #fff7f8);
+}
+
+.setting-card {
+  display: grid;
+  gap: 12px;
+}
+
+.setting-card select {
+  width: 100%;
+  border: 1px solid #d7e3ef;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbff;
+  color: #182b3f;
+  font: inherit;
+  font-weight: 800;
+}
+
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 900;
+}
+
+.settings-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #25c993;
+}
+
+.settings-wide {
+  margin-top: 18px;
+}
+
+.safety-seal {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #ecfff8;
+  color: #15966c;
+  font-weight: 900;
+}
+
+.safety-seal.high,
+.safety-seal.critical {
+  background: #fff0f2;
+  color: #c42f43;
+}
+
+.safety-seal.medium {
+  background: #fff8e1;
+  color: #a26500;
 }
 
 .reason-list {

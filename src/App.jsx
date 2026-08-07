@@ -60,12 +60,42 @@ const stateCaseData = [
 const reportTypes = ["Phishing", "QR Scam", "WhatsApp", "Fake Call", "Fake Job", "UPI Fraud"];
 const recentActivity = ["QR Code Safe", "WhatsApp Scam Detected", "URL Safe", "Fake News Detected"];
 const scamLibrary = [
-  ["Digital Arrest", "Fake police or agency pressure call", "Never move money under pressure"],
-  ["UPI Refund", "Refund link or collect request", "Open UPI app yourself"],
-  ["Fake Job", "High salary plus registration fee", "Do not pay to get hired"],
-  ["KYC Scam", "Account block warning", "Update only through official app"],
-  ["Parcel Scam", "Courier issue with payment demand", "Call courier from official site"],
-  ["Investment Scam", "Guaranteed fast returns", "Avoid unreal promises"],
+  {
+    name: "Digital Arrest",
+    example: "Caller claims to be police, CBI, customs, or court and asks you to stay on video call.",
+    signs: ["Threats of arrest", "Video call pressure", "Demand for secrecy", "Money transfer for verification"],
+    actions: ["Disconnect the call", "Do not transfer money", "Call 1930 if money was lost", "Save phone number and screenshots"],
+  },
+  {
+    name: "UPI Refund Scam",
+    example: "Fraudster sends a collect request or QR code and says approving it will give you a refund.",
+    signs: ["Approve request to receive money", "Unknown UPI ID", "Urgent refund message", "Screen-sharing request"],
+    actions: ["Never enter UPI PIN to receive money", "Reject collect requests", "Block/report the UPI ID", "Check transaction status inside your bank app"],
+  },
+  {
+    name: "KYC Update Scam",
+    example: "SMS says your bank/wallet will be blocked unless you click a link and verify KYC.",
+    signs: ["Account block warning", "Shortened or lookalike URL", "OTP/password request", "Unknown sender ID"],
+    actions: ["Open official app yourself", "Do not click message links", "Never share OTP/PIN/password", "Report suspicious URL on cybercrime portal"],
+  },
+  {
+    name: "Fake Job Scam",
+    example: "High salary work-from-home offer asks for registration, kit, or training fee.",
+    signs: ["Unreal salary", "Joining fee", "No official email domain", "Immediate selection without interview"],
+    actions: ["Do not pay for a job", "Verify company career page", "Check recruiter identity", "Keep payment/chat evidence"],
+  },
+  {
+    name: "Parcel Scam",
+    example: "Caller claims your parcel contains illegal items or needs a payment to release it.",
+    signs: ["Customs/police threat", "Courier payment link", "Personal document demand", "Unknown tracking number"],
+    actions: ["Check official courier website", "Do not share ID over chat", "Do not install remote apps", "Call local police for threats"],
+  },
+  {
+    name: "Investment Scam",
+    example: "Message promises guaranteed returns, doubled money, or daily profit after UPI deposit.",
+    signs: ["Guaranteed profit", "Telegram/WhatsApp group pressure", "Fake screenshots", "Withdrawal fee demand"],
+    actions: ["Avoid unrealistic returns", "Verify SEBI/RBI registration", "Do not add more money to withdraw", "Report the account and payment trail"],
+  },
 ];
 const liveAlerts = [
   ["Fake parcel scams", "High", "Metro cities", "Verify courier tracking only on official websites."],
@@ -73,6 +103,16 @@ const liveAlerts = [
   ["UPI refund fraud", "High", "UPI users", "Never approve collect requests for refunds."],
   ["Fake job offers", "Medium", "Students", "No real employer asks joining fee on UPI."],
 ];
+
+const trustChecks = ["HTTPS Secured", "Data Encrypted", "API Protected", "Privacy Protected", "AI Explainability", "Open Source Ready"];
+const deniedPermissions = ["Contacts", "Photos", "Location", "OTP", "Passwords", "Background microphone"];
+const autoDeleteOptions = ["30 Minutes", "1 Hour", "24 Hours", "Never"];
+const allowedEvidence = [".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp3", ".wav", ".m4a"];
+
+function isAllowedEvidence(fileName) {
+  const lower = fileName.toLowerCase();
+  return allowedEvidence.some((ext) => lower.endsWith(ext));
+}
 
 function getStoredHistory() {
   try {
@@ -309,6 +349,10 @@ export default function App() {
   const [autoScan, setAutoScan] = useState(false);
   const [activeSection, setActiveSection] = useState("Dashboard");
   const [reportType, setReportType] = useState("UPI Fraud");
+  const [evidenceFile, setEvidenceFile] = useState("");
+  const [autoDelete, setAutoDelete] = useState("1 Hour");
+  const [notificationsOn, setNotificationsOn] = useState(true);
+  const [privacyMode, setPrivacyMode] = useState(true);
   const [error, setError] = useState("");
   const recognitionRef = useRef(null);
 
@@ -449,9 +493,25 @@ export default function App() {
   function handleAudioUpload(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!isAllowedEvidence(file.name)) {
+      setError("Unsupported file type. Upload jpg, png, pdf, txt, mp3, wav, or m4a only.");
+      return;
+    }
     setMode("call");
     setAudioFileName(file.name);
     setError("Recording selected. Use live voice capture or paste the transcript below for analysis.");
+  }
+
+  function handleEvidenceUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!isAllowedEvidence(file.name)) {
+      setEvidenceFile("");
+      setError("Blocked unsafe file type. Allowed: jpg, png, pdf, txt, mp3, wav, m4a.");
+      return;
+    }
+    setEvidenceFile(file.name);
+    setError("Evidence selected. File will be used only for this report draft.");
   }
 
   function clearHistory() {
@@ -661,6 +721,18 @@ export default function App() {
             ))}
           </section>
 
+          <section className={activeSection === "Dashboard" ? "trust-strip" : "trust-strip section-hidden"}>
+            <div className="glass trust-card">
+              <div>
+                <h2>Trust Center</h2>
+                <p>Privacy-first scanning with explainable results and controlled permissions.</p>
+              </div>
+              <div className="trust-list">
+                {trustChecks.map((item) => <span key={item}>{item}</span>)}
+              </div>
+            </div>
+          </section>
+
           <section className={activeSection === "Dashboard" ? "quick-actions" : "quick-actions section-hidden"}>
             {modes.slice(0, 4).map(([id, label]) => (
               <button className={mode === id ? "quick-card active" : "quick-card"} key={id} onClick={() => selectMode(id)}>
@@ -822,6 +894,7 @@ export default function App() {
               <section className="glass ai-card">
                 <h2>BharatSHIELD Review</h2>
                 <p className="typing">{result ? result.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
+                <div className={`safety-seal ${riskColor(score)}`}>{score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"} | Verified by BharatSHIELD</div>
                 <ol>{(result?.signals?.length ? result.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
               </section>
             </aside>
@@ -970,12 +1043,18 @@ export default function App() {
                   </div>
                   <div className="glass">
                     <h2>Upload Evidence</h2>
+                    <label className="evidence-upload">
+                      <input type="file" accept=".jpg,.jpeg,.png,.pdf,.txt,.mp3,.wav,.m4a" onChange={handleEvidenceUpload} />
+                      <strong>{evidenceFile || "Choose evidence file"}</strong>
+                      <small>Allowed: jpg, png, pdf, txt, mp3, wav, m4a. Blocked: exe, apk, bat, zip.</small>
+                    </label>
                     <div className="evidence-types"><span>Screenshot</span><span>Image</span><span>PDF</span><span>Audio</span></div>
-                    <p>Attach proof, scan first, then download a complaint draft.</p>
+                    <p>File is used for this report draft and not stored permanently.</p>
                   </div>
                   <div className="glass">
                     <h2>Complaint Summary</h2>
                     <p>{complaintSummary}</p>
+                    <div className="secure-note">Scam ID: {incidentId} | SHA256-style fingerprint ready</div>
                     <div className="toolrow compact-actions">
                       <button className="primary" onClick={downloadComplaint}>Download Complaint</button>
                       <button onClick={openCyberPortal}>Report Officially</button>
@@ -989,17 +1068,25 @@ export default function App() {
               <>
                 <div className="section-head wide-head"><h2>Awareness Center</h2><button>Daily Quiz</button></div>
                 <div className="library-grid">
-                  {scamLibrary.map(([name, example, tip]) => (
-                    <div className="glass library-card" key={name}>
-                      <h2>{name}</h2>
-                      <p><strong>How it works:</strong> {example}</p>
-                      <p><strong>Stay safe:</strong> {tip}</p>
+                  {scamLibrary.map((item) => (
+                    <div className="glass library-card" key={item.name}>
+                      <h2>{item.name}</h2>
+                      <p><strong>How it works:</strong> {item.example}</p>
+                      <div>
+                        <strong>Warning signs</strong>
+                        <ul>{item.signs.map((sign) => <li key={sign}>{sign}</li>)}</ul>
+                      </div>
+                      <div>
+                        <strong>What to do</strong>
+                        <ul>{item.actions.map((action) => <li key={action}>{action}</li>)}</ul>
+                      </div>
                     </div>
                   ))}
                   <div className="glass quiz-card">
                     <h2>Can you identify this scam?</h2>
                     <p>"Your bank account will be blocked. Share OTP now."</p>
                     <div className="pill-grid"><button>Safe</button><button className="active">Scam</button><button>Not Sure</button></div>
+                    <p className="secure-note">Correct: Scam. Government safety guidance recommends never sharing OTP, PIN, password, or approving unknown payment requests.</p>
                   </div>
                 </div>
               </>
@@ -1012,6 +1099,16 @@ export default function App() {
                   <div className="glass emergency-card"><h2>Call 1930</h2><p>Financial cyber fraud helpline.</p><a href="tel:1930">Call Now</a></div>
                   <div className="glass emergency-card"><h2>Cyber Crime Portal</h2><p>Report and track complaints officially.</p><button onClick={openCyberPortal}>Open Portal</button></div>
                   <div className="glass emergency-card"><h2>Stop Payment</h2><p>Call your bank, block UPI/card, preserve evidence.</p><button onClick={downloadComplaint}>Copy Complaint</button></div>
+                </div>
+                <div className="glass sos-panel">
+                  <h2>SOS Mode</h2>
+                  <ol>
+                    <li>Stop chatting, screen sharing, or video call immediately.</li>
+                    <li>Do not share OTP, UPI PIN, card PIN, password, or remote access.</li>
+                    <li>Call 1930 quickly for financial fraud and request bank freeze support.</li>
+                    <li>Save transaction ID, phone number, UPI ID, screenshots, and audio evidence.</li>
+                    <li>Open cybercrime.gov.in and submit the complaint draft generated here.</li>
+                  </ol>
                 </div>
               </>
             )}
@@ -1048,11 +1145,43 @@ export default function App() {
             )}
 
             {activeSection === "Settings" && (
-              <div className="ecosystem-grid">
-                {["Dark Mode", "Language", "Notifications", "Privacy", "Export Reports"].map((item) => (
-                  <div className="glass setting-card" key={item}><h2>{item}</h2><p>Ready for presentation settings.</p></div>
-                ))}
-              </div>
+              <>
+                <div className="ecosystem-grid">
+                  <div className="glass setting-card">
+                    <h2>Auto Delete</h2>
+                    <select value={autoDelete} onChange={(event) => setAutoDelete(event.target.value)}>
+                      {autoDeleteOptions.map((item) => <option key={item}>{item}</option>)}
+                    </select>
+                    <p>Evidence and scan text are treated as temporary review data.</p>
+                  </div>
+                  <div className="glass setting-card">
+                    <h2>Notifications</h2>
+                    <label className="settings-toggle"><input type="checkbox" checked={notificationsOn} onChange={(event) => setNotificationsOn(event.target.checked)} /> Scam trend alerts</label>
+                    <p>{notificationsOn ? "Alerts enabled for high-risk scams." : "Alerts disabled."}</p>
+                  </div>
+                  <div className="glass setting-card">
+                    <h2>Privacy Mode</h2>
+                    <label className="settings-toggle"><input type="checkbox" checked={privacyMode} onChange={(event) => setPrivacyMode(event.target.checked)} /> Hide sensitive scan data</label>
+                    <p>{privacyMode ? "Sensitive text previews are minimized." : "Full previews may be visible."}</p>
+                  </div>
+                </div>
+                <div className="ecosystem-grid settings-wide">
+                  <div className="glass">
+                    <h2>Permission Checker</h2>
+                    <p>BharatSHIELD does not request these permissions for scanning:</p>
+                    <div className="permission-grid">{deniedPermissions.map((item) => <span key={item}>No {item}</span>)}</div>
+                  </div>
+                  <div className="glass">
+                    <h2>Secure Upload Policy</h2>
+                    <p>Allowed files: jpg, png, pdf, txt, mp3, wav, m4a. Executables, APKs, batch files, and zip archives are blocked.</p>
+                    <p className="secure-note">Files are reviewed locally in the browser flow and marked for deletion after {autoDelete}.</p>
+                  </div>
+                  <div className="glass">
+                    <h2>Trust Badge</h2>
+                    <div className="trust-list">{trustChecks.map((item) => <span key={item}>{item}</span>)}</div>
+                  </div>
+                </div>
+              </>
             )}
           </section>
         </section>
