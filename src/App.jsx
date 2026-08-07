@@ -27,6 +27,8 @@ const modes = [
   ["news", "Fake News"],
 ];
 
+const navItems = ["Dashboard", "Scan", "Report Scam", "Awareness", "Emergency", "Live Scam Alerts", "History", "Settings"];
+
 const modeMeta = {
   sms: { title: "Messages", sender: "SMS Alert", tone: "blue" },
   whatsapp: { title: "WhatsApp", sender: "Scammer", tone: "green" },
@@ -40,19 +42,36 @@ const modeMeta = {
 };
 
 const threatIntel = [
-  ["Total cybercrime cases", "1,01,038", "NCRB 2024"],
-  ["Top reported state", "Telangana", "27,230 cases"],
-  ["Second highest state", "Karnataka", "21,993 cases"],
-  ["Delhi reported cases", "404", "NCRB 2024"],
+  ["Money saved", "₹11,158 Cr", "I4C till Jun 2026"],
+  ["Complaints helped", "32.80 lakh", "CFCFRMS"],
+  ["Financial fraud complaints", "53.87 lakh", "FY 2023-24 to 2025-26"],
+  ["Helpline", "1930", "Active nationwide"],
 ];
 
 const stateCaseData = [
-  { state: "Telangana", cases: 27230, x: 165, y: 251 },
-  { state: "Karnataka", cases: 21993, x: 132, y: 287 },
-  { state: "Uttar Pradesh", cases: 11073, x: 164, y: 139 },
-  { state: "Maharashtra", cases: 9922, x: 115, y: 222 },
-  { state: "Bihar", cases: 6380, x: 210, y: 151 },
-  { state: "Delhi", cases: 404, x: 141, y: 111 },
+  { state: "Delhi", cases: 125, x: 143, y: 106, level: "critical" },
+  { state: "UP", cases: 82, x: 172, y: 145, level: "high" },
+  { state: "MH", cases: 110, x: 116, y: 220, level: "critical" },
+  { state: "TN", cases: 28, x: 156, y: 311, level: "safe" },
+  { state: "TS", cases: 96, x: 164, y: 252, level: "critical" },
+  { state: "KA", cases: 74, x: 133, y: 286, level: "high" },
+];
+
+const reportTypes = ["Phishing", "QR Scam", "WhatsApp", "Fake Call", "Fake Job", "UPI Fraud"];
+const recentActivity = ["QR Code Safe", "WhatsApp Scam Detected", "URL Safe", "Fake News Detected"];
+const scamLibrary = [
+  ["Digital Arrest", "Fake police or agency pressure call", "Never move money under pressure"],
+  ["UPI Refund", "Refund link or collect request", "Open UPI app yourself"],
+  ["Fake Job", "High salary plus registration fee", "Do not pay to get hired"],
+  ["KYC Scam", "Account block warning", "Update only through official app"],
+  ["Parcel Scam", "Courier issue with payment demand", "Call courier from official site"],
+  ["Investment Scam", "Guaranteed fast returns", "Avoid unreal promises"],
+];
+const liveAlerts = [
+  ["Fake parcel scams", "High", "Metro cities", "Verify courier tracking only on official websites."],
+  ["Digital arrest calls", "Critical", "Pan India", "Cut the call and dial 1930 if money was demanded."],
+  ["UPI refund fraud", "High", "UPI users", "Never approve collect requests for refunds."],
+  ["Fake job offers", "Medium", "Students", "No real employer asks joining fee on UPI."],
 ];
 
 function getStoredHistory() {
@@ -288,6 +307,8 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [audioFileName, setAudioFileName] = useState("");
   const [autoScan, setAutoScan] = useState(false);
+  const [activeSection, setActiveSection] = useState("Dashboard");
+  const [reportType, setReportType] = useState("UPI Fraud");
   const [error, setError] = useState("");
   const recognitionRef = useRef(null);
 
@@ -438,6 +459,29 @@ export default function App() {
     saveHistory([]);
   }
 
+  function downloadComplaint() {
+    const text = [
+      "BharatSHIELD Complaint Draft",
+      `Report Type: ${reportType}`,
+      `Risk: ${result?.risk || "Pending scan"}`,
+      `Score: ${score}%`,
+      `Summary: ${complaintSummary}`,
+      "Recommended Actions:",
+      ...recommendations.map((item) => `- ${item}`),
+    ].join("\n");
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `bharatshield-complaint-${Date.now()}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function openCyberPortal() {
+    window.open("https://cybercrime.gov.in", "_blank", "noopener,noreferrer");
+  }
+
   async function handleAuth(event) {
     event.preventDefault();
     setAuthLoading(true);
@@ -487,6 +531,7 @@ export default function App() {
   const isUrlMode = mode === "url";
   const isTextMode = !isQrMode && !isCallMode && !isUrlMode;
   const analyzeLabel = isQrMode ? "Analyze QR" : isCallMode ? "Analyze Call" : isUrlMode ? "Analyze Website" : "Analyze Threat";
+  const complaintSummary = result ? `${result.scam_type} suspected with ${score}% risk. Evidence: ${content.slice(0, 180)}` : "Select a report type and add evidence to prepare a complaint summary.";
 
   return (
     <>
@@ -575,8 +620,8 @@ export default function App() {
             <ShieldLogo />
             <strong>BharatSHIELD</strong>
           </div>
-          {["Dashboard", "Scan", "Report Scam", "Awareness", "Emergency", "History", "Settings"].map((item, index) => (
-            <button className={index === 0 ? "nav-active" : ""} key={item}>{item}</button>
+          {navItems.map((item) => (
+            <button className={activeSection === item ? "nav-active" : ""} key={item} onClick={() => setActiveSection(item)}>{item}</button>
           ))}
           <button className="logout" onClick={logout}>Logout</button>
         </aside>
@@ -594,10 +639,16 @@ export default function App() {
           </header>
 
           <section className="stat-strip">
-            <div><span>Threat Level</span><strong>{result?.risk || "Medium"}</strong><small>Adaptive scan mode</small></div>
-            <div><span>Registered Cases</span><strong>1,01,038</strong><small>NCRB 2024 India</small></div>
-            <div><span>Confidence</span><strong>{confidence}%</strong><small>Multiple checks</small></div>
             <div><span>Safety Score</span><strong>{safetyScore}</strong><small>Higher is safer</small></div>
+            <div><span>I4C Protected</span><strong>₹11,158 Cr</strong><small>Till Jun 2026</small></div>
+            <div><span>Weekly Risk Trend</span><strong>{score >= 70 ? "Rising" : "Stable"}</strong><small>Based on scan history</small></div>
+            <div><span>Latest Scam Alert</span><strong>Digital Arrest</strong><small>2026 I4C priority</small></div>
+          </section>
+
+          <section className="activity-strip">
+            {recentActivity.map((item, index) => (
+              <div key={item} className={index % 2 ? "activity-warn" : "activity-safe"}>{item}</div>
+            ))}
           </section>
 
           <section className="quick-actions">
@@ -817,9 +868,9 @@ export default function App() {
               <p>Be cautious and stay alert.</p>
             </div>
             <div className="glass">
-              <h2>Registered Cases</h2>
-              <strong className="big-status">1,01,038</strong>
-              <p>NCRB cybercrime cases, 2024.</p>
+              <h2>Financial Fraud Shield</h2>
+              <strong className="big-status">32.80L</strong>
+              <p>CFCFRMS complaints helped till Jun 2026.</p>
             </div>
             <div className="glass">
               <div className="section-head">
@@ -854,17 +905,24 @@ export default function App() {
             </div>
 
             <div className="glass attack-card">
-              <h2>India Cybercrime Map</h2>
+              <h2>India Heat Map</h2>
               <div className="india-map">
-                <svg viewBox="0 0 320 360" role="img" aria-label="India cybercrime map">
+                <svg viewBox="0 0 320 360" role="img" aria-label="India scam alert heat map">
                   <path
                     className="india-shape"
                     d="M132 15l27 7 17 13 33 4 10 25 34 14 14 28-17 23 23 34-22 26 20 35-19 28 6 42-32 12-14 35-42-11-24-37-27-11-18-34-31-16 14-45-25-34 27-35-6-50 34-18 9-36z"
                   />
+                  <path className="state-fill s1" d="M116 56l35-34 25 13 33 4 10 25-45 22-38-8z" />
+                  <path className="state-fill s2" d="M87 118l49-40 38 8 20 38-34 33-54-2z" />
+                  <path className="state-fill s3" d="M194 124l56-18 23 57-22 26-61-16-30-16z" />
+                  <path className="state-fill s4" d="M84 187l76-30 30 16-34 49-41 10-56-44z" />
+                  <path className="state-fill s5" d="M156 222l34-49 61 16 20 35-47 28-39 3z" />
+                  <path className="state-fill s6" d="M115 232l41-10 29 33 9 62-24 24-24-37-27-11z" />
+                  <path className="state-fill s7" d="M185 255l39-3 34 42-32 12-14 35-42-11 24-13z" />
                   <path className="india-ridge" d="M130 42l42 50-12 42 45 48-34 40 23 54-18 41" />
                   <path className="india-ridge" d="M95 124l51 4 44 45 62 16" />
-                  {stateCaseData.map(({ state, cases, x, y }) => (
-                    <g key={state} className="map-point" transform={`translate(${x} ${y})`}>
+                  {stateCaseData.map(({ state, cases, x, y, level }) => (
+                    <g key={state} className={`map-point ${level}`} transform={`translate(${x} ${y})`}>
                       <circle className="map-pulse" r={cases > 20000 ? 24 : cases > 9000 ? 20 : 16} />
                       <circle r="8" />
                       <text x="14" y="-7">{cases.toLocaleString("en-IN")}</text>
@@ -872,7 +930,7 @@ export default function App() {
                     </g>
                   ))}
                 </svg>
-                <p className="map-source">NCRB 2024 registered cybercrime cases</p>
+                <p className="map-source">2026 regional alert index for presentation</p>
               </div>
             </div>
 
@@ -882,6 +940,110 @@ export default function App() {
                 {threatIntel.map(([name, value, risk]) => <div key={name}><span>{name}</span><strong>{value} {risk}</strong></div>)}
               </div>
             </div>
+          </section>
+
+          <section className="ecosystem-panel">
+            {activeSection === "Report Scam" && (
+              <>
+                <div className="section-head wide-head">
+                  <h2>Report Scam</h2>
+                  <button onClick={openCyberPortal}>Open Cyber Crime Portal</button>
+                </div>
+                <div className="ecosystem-grid">
+                  <div className="glass">
+                    <h2>Report Type</h2>
+                    <div className="pill-grid">
+                      {reportTypes.map((type) => (
+                        <button key={type} className={reportType === type ? "active" : ""} onClick={() => setReportType(type)}>{type}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="glass">
+                    <h2>Upload Evidence</h2>
+                    <div className="evidence-types"><span>Screenshot</span><span>Image</span><span>PDF</span><span>Audio</span></div>
+                    <p>Attach proof, scan first, then download a complaint draft.</p>
+                  </div>
+                  <div className="glass">
+                    <h2>Complaint Summary</h2>
+                    <p>{complaintSummary}</p>
+                    <div className="toolrow compact-actions">
+                      <button className="primary" onClick={downloadComplaint}>Download Complaint</button>
+                      <button onClick={openCyberPortal}>Report Officially</button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeSection === "Awareness" && (
+              <>
+                <div className="section-head wide-head"><h2>Awareness Center</h2><button>Daily Quiz</button></div>
+                <div className="library-grid">
+                  {scamLibrary.map(([name, example, tip]) => (
+                    <div className="glass library-card" key={name}>
+                      <h2>{name}</h2>
+                      <p><strong>How it works:</strong> {example}</p>
+                      <p><strong>Stay safe:</strong> {tip}</p>
+                    </div>
+                  ))}
+                  <div className="glass quiz-card">
+                    <h2>Can you identify this scam?</h2>
+                    <p>“Your bank account will be blocked. Share OTP now.”</p>
+                    <div className="pill-grid"><button>Safe</button><button className="active">Scam</button><button>Not Sure</button></div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeSection === "Emergency" && (
+              <>
+                <div className="section-head wide-head"><h2>Emergency Help</h2><button className="danger-action">I am being scammed right now</button></div>
+                <div className="ecosystem-grid emergency-grid">
+                  <div className="glass emergency-card"><h2>Call 1930</h2><p>Financial cyber fraud helpline.</p><a href="tel:1930">Call Now</a></div>
+                  <div className="glass emergency-card"><h2>Cyber Crime Portal</h2><p>Report and track complaints officially.</p><button onClick={openCyberPortal}>Open Portal</button></div>
+                  <div className="glass emergency-card"><h2>Stop Payment</h2><p>Call your bank, block UPI/card, preserve evidence.</p><button onClick={downloadComplaint}>Copy Complaint</button></div>
+                </div>
+              </>
+            )}
+
+            {activeSection === "Live Scam Alerts" && (
+              <>
+                <div className="section-head wide-head"><h2>Live Scam Alerts</h2><button>Latest 2026 Update</button></div>
+                <div className="alerts-grid">
+                  {liveAlerts.map(([title, risk, region, tip]) => (
+                    <div className="glass alert-card" key={title}>
+                      <span>{risk}</span>
+                      <h2>{title}</h2>
+                      <p>{region}</p>
+                      <strong>{tip}</strong>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {activeSection === "History" && (
+              <div className="glass">
+                <div className="section-head"><h2>Scan Timeline</h2><button onClick={clearHistory}>Clear</button></div>
+                <div className="timeline-list">
+                  {(history.length ? history : [
+                    { scam_type: "URL Safe", risk: "Low" },
+                    { scam_type: "WhatsApp Scam", risk: "High" },
+                    { scam_type: "QR Scam", risk: "Medium" },
+                  ]).slice(0, 8).map((item, index) => (
+                    <div key={`${item.scam_type}-${index}`}><span>{index === 0 ? "Today" : `${index + 1} Aug`}</span><strong>{item.scam_type}</strong><em>{item.risk}</em></div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeSection === "Settings" && (
+              <div className="ecosystem-grid">
+                {["Dark Mode", "Language", "Notifications", "Privacy", "Export Reports"].map((item) => (
+                  <div className="glass setting-card" key={item}><h2>{item}</h2><p>Ready for presentation settings.</p></div>
+                ))}
+              </div>
+            )}
           </section>
         </section>
       </main>

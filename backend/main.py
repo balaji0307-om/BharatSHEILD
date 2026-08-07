@@ -16,10 +16,19 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="BharatSHIELD")
 
+allowed_origins = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "https://bharatshield.onrender.com",
+    "https://bharatsheild.onrender.com",
+]
+allowed_origins.extend(origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.onrender\.com",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

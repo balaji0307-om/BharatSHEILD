@@ -454,6 +454,10 @@ h2 {
   color: #fff;
 }
 
+.sidebar button:nth-child(7) {
+  color: #ffe7b3;
+}
+
 .logout {
   margin-top: auto;
 }
@@ -499,6 +503,29 @@ h2 {
   display: block;
   margin: 7px 0;
   font-size: 1.8rem;
+}
+
+.activity-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 14px 0 22px;
+}
+
+.activity-strip div {
+  border: 1px solid #dfe8f1;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fff;
+  font-weight: 900;
+}
+
+.activity-safe {
+  color: #15966c;
+}
+
+.activity-warn {
+  color: #c94925;
 }
 
 .welcome-row,
@@ -973,7 +1000,10 @@ textarea:focus {
 .analysis-grid,
 .intel-grid,
 .lower-grid,
-.explain-grid {
+.explain-grid,
+.ecosystem-grid,
+.library-grid,
+.alerts-grid {
   display: grid;
   gap: 18px;
   margin-top: 18px;
@@ -993,6 +1023,99 @@ textarea:focus {
 
 .explain-grid {
   grid-template-columns: 1.1fr 1fr 1fr;
+}
+
+.ecosystem-panel {
+  margin-top: 20px;
+}
+
+.ecosystem-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.library-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.alerts-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.wide-head {
+  justify-content: space-between;
+  padding-top: 8px;
+}
+
+.pill-grid,
+.evidence-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pill-grid button,
+.evidence-types span,
+.emergency-card a {
+  border: 1px solid #d7e3ef;
+  border-radius: 999px;
+  padding: 10px 13px;
+  background: #f8fbff;
+  color: #182b3f;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.pill-grid button.active {
+  border-color: #1d63e9;
+  background: #e8f2ff;
+  color: #145bc6;
+}
+
+.compact-actions {
+  margin-top: 12px;
+}
+
+.danger-action,
+.emergency-card a {
+  border-color: #ee495c;
+  background: #fff0f2;
+  color: #c42f43;
+}
+
+.alert-card span {
+  display: inline-block;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #fff0f2;
+  color: #c42f43;
+  font-weight: 900;
+}
+
+.alert-card strong,
+.library-card strong {
+  color: #145bc6;
+}
+
+.timeline-list {
+  display: grid;
+  gap: 12px;
+}
+
+.timeline-list div {
+  display: grid;
+  grid-template-columns: 90px 1fr 90px;
+  gap: 14px;
+  align-items: center;
+  border-bottom: 1px solid #edf1f5;
+  padding-bottom: 10px;
+}
+
+.timeline-list span,
+.timeline-list em {
+  color: #607588;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .reason-list {
@@ -1223,16 +1346,40 @@ mark.danger {
 }
 
 .india-shape {
-  fill: rgba(29, 99, 233, 0.18);
-  stroke: rgba(20, 91, 198, 0.42);
-  stroke-width: 2;
+  fill: #fff7bd;
+  stroke: rgba(21, 39, 58, 0.35);
+  stroke-width: 2.2;
   filter: drop-shadow(0 16px 22px rgba(29, 99, 233, 0.14));
+}
+
+.state-fill {
+  stroke: rgba(21, 39, 58, 0.34);
+  stroke-width: 1.5;
+}
+
+.s1,
+.s5 {
+  fill: #fff6bd;
+}
+
+.s2,
+.s7 {
+  fill: #cfe6c5;
+}
+
+.s3 {
+  fill: #f6cde8;
+}
+
+.s4,
+.s6 {
+  fill: #f8a31d;
 }
 
 .india-ridge {
   fill: none;
-  stroke: rgba(20, 91, 198, 0.18);
-  stroke-width: 2;
+  stroke: rgba(21, 39, 58, 0.22);
+  stroke-width: 1.5;
   stroke-linecap: round;
 }
 
@@ -1243,6 +1390,10 @@ mark.danger {
 .map-pulse {
   fill: rgba(238, 73, 92, 0.28);
   animation: pulse 1.7s infinite;
+}
+
+.map-point.safe circle:not(.map-pulse) {
+  fill: #25c993;
 }
 
 .map-point text {
