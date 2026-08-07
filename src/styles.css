@@ -1073,6 +1073,116 @@ textarea:focus {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.guardian-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.2fr) minmax(260px, 0.8fr) minmax(240px, 0.7fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.extension-preview {
+  position: relative;
+  min-height: 360px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #f8fbff, #eef6ff);
+}
+
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 11px 13px;
+  background: #15263b;
+  color: #dcecff;
+  font-weight: 800;
+}
+
+.browser-bar span {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #ee495c;
+  box-shadow: 22px 0 #f2b83b, 44px 0 #25c993;
+}
+
+.fake-page {
+  display: grid;
+  gap: 14px;
+  width: 68%;
+  margin: 28px auto;
+  border: 1px solid #d7e3ef;
+  border-radius: 8px;
+  padding: 22px;
+  background: #fff;
+}
+
+.fake-page input {
+  border: 1px solid #d7e3ef;
+  border-radius: 8px;
+  padding: 12px;
+  color: #607588;
+}
+
+.guardian-overlay {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: min(340px, 74%);
+  border: 1px solid #ffc4cc;
+  border-radius: 8px;
+  padding: 18px;
+  background: #fff7f8;
+  box-shadow: 0 24px 48px rgba(196, 47, 67, 0.18);
+}
+
+.guardian-overlay span {
+  color: #c42f43;
+  font-weight: 900;
+}
+
+.trust-meter-card {
+  display: grid;
+  gap: 12px;
+}
+
+.trust-score {
+  display: grid;
+  place-items: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background: conic-gradient(#ee495c 8%, #edf2f6 0);
+  color: #c42f43;
+  font-size: 1.85rem;
+  font-weight: 900;
+}
+
+.dna-box {
+  border-radius: 8px;
+  padding: 14px;
+  background: #071a20;
+  color: #88eaff;
+  font-family: Consolas, monospace;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.roadmap-list,
+.roadmap-list div {
+  display: grid;
+  gap: 8px;
+}
+
+.roadmap-list div {
+  border-bottom: 1px solid #edf1f5;
+  padding-bottom: 10px;
+}
+
+.compact-timeline div {
+  grid-template-columns: 76px 1fr 70px;
+}
+
 .library-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -1655,7 +1765,12 @@ mark.danger {
   .analysis-grid,
   .intel-grid,
   .lower-grid,
-  .explain-grid {
+  .explain-grid,
+  .ecosystem-grid,
+  .library-grid,
+  .alerts-grid,
+  .guardian-grid,
+  .trust-card {
     grid-template-columns: 1fr;
   }
 

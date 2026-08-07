@@ -27,7 +27,7 @@ const modes = [
   ["news", "Fake News"],
 ];
 
-const navItems = ["Dashboard", "Scan", "Report Scam", "Awareness", "Emergency", "Live Scam Alerts", "History", "Settings"];
+const navItems = ["Dashboard", "Scan", "Guardian", "Report Scam", "Awareness", "Emergency", "Live Scam Alerts", "History", "Settings"];
 
 const modeMeta = {
   sms: { title: "Messages", sender: "SMS Alert", tone: "blue" },
@@ -42,7 +42,7 @@ const modeMeta = {
 };
 
 const threatIntel = [
-  ["Money saved", "₹11,158 Cr", "I4C till Jun 2026"],
+  ["Money saved", "INR 11,158 Cr", "I4C till Jun 2026"],
   ["Complaints helped", "32.80 lakh", "CFCFRMS"],
   ["Financial fraud complaints", "53.87 lakh", "FY 2023-24 to 2025-26"],
   ["Helpline", "1930", "Active nationwide"],
@@ -102,6 +102,22 @@ const liveAlerts = [
   ["Digital arrest calls", "Critical", "Pan India", "Cut the call and dial 1930 if money was demanded."],
   ["UPI refund fraud", "High", "UPI users", "Never approve collect requests for refunds."],
   ["Fake job offers", "Medium", "Students", "No real employer asks joining fee on UPI."],
+];
+
+const guardianSignals = [
+  ["URL Score", "91%", "Lookalike SBI login path"],
+  ["SSL", "Valid", "Certificate present, still not enough"],
+  ["Brand Match", "94%", "Visual and domain resemble SBI"],
+  ["Redirect", "Hidden", "Login page forwards to external form"],
+  ["Intent", "OTP Theft", "Page requests mobile OTP"],
+];
+
+const guardianTimeline = ["Opened URL", "Redirect detected", "Fake login form found", "OTP field detected", "High risk warning shown"];
+const platformRoadmap = [
+  ["Browser Extension", "Real-time website overlay, right-click scan, copy detection"],
+  ["Android Share", "WhatsApp, SMS, Email, Telegram share-to-scan flow"],
+  ["QR Camera", "Live QR sandbox before opening destination"],
+  ["Community Reputation", "Reported count, last seen, duplicate scam DNA"],
 ];
 
 const trustChecks = ["HTTPS Secured", "Data Encrypted", "API Protected", "Privacy Protected", "AI Explainability", "Open Source Ready"];
@@ -1026,6 +1042,60 @@ export default function App() {
           </section>
 
           <section className={activeSection !== "Dashboard" && activeSection !== "Scan" ? "ecosystem-panel" : "ecosystem-panel section-hidden"}>
+            {activeSection === "Guardian" && (
+              <>
+                <div className="section-head wide-head">
+                  <h2>BharatSHIELD Guardian</h2>
+                  <button onClick={() => setActiveSection("Scan")}>Scan Now</button>
+                </div>
+                <div className="guardian-grid">
+                  <div className="glass extension-preview">
+                    <div className="browser-bar"><span /> https://sbi-secure-login.example</div>
+                    <div className="fake-page">
+                      <strong>State Bank Secure Login</strong>
+                      <input readOnly value="Enter mobile number" />
+                      <input readOnly value="Enter OTP" />
+                    </div>
+                    <div className="guardian-overlay">
+                      <span>HIGH RISK</span>
+                      <h2>This site imitates SBI</h2>
+                      <p>Brand lookalike, hidden redirect, and OTP request detected.</p>
+                      <div className="toolrow compact-actions"><button className="danger-action">Leave Site</button><button>View Details</button></div>
+                    </div>
+                  </div>
+                  <div className="glass trust-meter-card">
+                    <h2>Website Trust Meter</h2>
+                    <div className="trust-score">8/100</div>
+                    <p>Low trust because login, OTP, and brand impersonation signals were found.</p>
+                    <div className="intel-list">{guardianSignals.map(([name, value, detail]) => <div key={name}><span>{name}</span><strong>{value}</strong><small>{detail}</small></div>)}</div>
+                  </div>
+                  <div className="glass">
+                    <h2>Scam DNA</h2>
+                    <div className="dna-box">BS-DNA-91F2-A8C7</div>
+                    <p>Fingerprint combines URL, keywords, brand similarity, intent, redirect path, and visual clues to find duplicate scams.</p>
+                    <div className="trust-list"><span>SHA256 Fingerprint</span><span>Brand: SBI</span><span>Intent: OTP Theft</span><span>Duplicate Ready</span></div>
+                  </div>
+                </div>
+                <div className="ecosystem-grid">
+                  <div className="glass">
+                    <h2>Scam Timeline</h2>
+                    <div className="timeline-list compact-timeline">
+                      {guardianTimeline.map((item, index) => <div key={item}><span>Step {index + 1}</span><strong>{item}</strong><em>{index >= 3 ? "High" : "Review"}</em></div>)}
+                    </div>
+                  </div>
+                  <div className="glass">
+                    <h2>QR Sandbox Preview</h2>
+                    <p>QR opens in a safe preview first. Destination, redirect, payment intent, UPI ID, and risk are shown before the user proceeds.</p>
+                    <div className="secure-note">File automatically deleted after analysis.</div>
+                  </div>
+                  <div className="glass">
+                    <h2>Integration Roadmap</h2>
+                    <div className="roadmap-list">{platformRoadmap.map(([title, detail]) => <div key={title}><strong>{title}</strong><p>{detail}</p></div>)}</div>
+                  </div>
+                </div>
+              </>
+            )}
+
             {activeSection === "Report Scam" && (
               <>
                 <div className="section-head wide-head">
