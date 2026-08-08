@@ -1320,7 +1320,43 @@ textarea:focus {
   border: 1px solid #d7e3ef;
   border-radius: 8px;
   padding: 10px;
+  background: #fff;
+  color: #142233;
+  font: inherit;
+  font-weight: 700;
+  outline: none;
+}
+
+.fake-page input:focus {
+  border-color: #1d63e9;
+  box-shadow: 0 0 0 3px rgba(29, 99, 233, 0.12);
+}
+
+.fake-page small {
   color: #607588;
+  font-weight: 800;
+}
+
+.otp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.otp-row button {
+  border: 1px solid #d7e3ef;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fbff;
+  color: #0051c9;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.otp-row button:disabled {
+  color: #9aaabd;
+  cursor: not-allowed;
 }
 
 .guardian-overlay {

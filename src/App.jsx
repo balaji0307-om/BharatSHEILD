@@ -394,6 +394,16 @@ function countLocalPayeeReports(upiId, fingerprint) {
   }
 }
 
+function makeGuardianOtp(mobile) {
+  const digits = mobile.replace(/\D/g, "").slice(-10);
+  if (digits.length < 10) return "";
+  let seed = 0;
+  for (let index = 0; index < digits.length; index += 1) {
+    seed = (seed * 31 + Number(digits[index])) % 1000000;
+  }
+  return String((seed + 100000) % 1000000).padStart(6, "0");
+}
+
 function detectHiddenImagePayload(bytes, fileName) {
   const view = new Uint8Array(bytes);
   const text = Array.from(view.slice(0, Math.min(view.length, 16000)))
@@ -617,6 +627,7 @@ export default function App() {
   const urlScore = result?.url_checks?.length ? Math.max(...result.url_checks.map((item) => item.score)) : result ? Math.max(30, result.score - 7) : 95;
   const safetyScore = result?.safety_score ?? 76;
   const incidentId = useMemo(() => `BS-${Math.floor(20000 + Math.random() * 70000)}`, [result?.created_at]);
+  const guardianOtp = makeGuardianOtp(guardianForm.mobile);
 
   useEffect(() => {
     if (!loading) return;
@@ -1578,17 +1589,35 @@ export default function App() {
                       <input
                         type="tel"
                         value={guardianForm.mobile}
-                        onChange={(event) => setGuardianForm((form) => ({ ...form, mobile: event.target.value }))}
+                        onChange={(event) => {
+                          const mobile = event.target.value.replace(/\D/g, "").slice(0, 10);
+                          setGuardianForm((form) => ({ ...form, mobile, otp: mobile === form.mobile ? form.otp : "" }));
+                        }}
                         placeholder="Enter mobile number"
                         inputMode="numeric"
+                        maxLength={10}
                       />
-                      <input
-                        type="text"
-                        value={guardianForm.otp}
-                        onChange={(event) => setGuardianForm((form) => ({ ...form, otp: event.target.value }))}
-                        placeholder="Enter OTP"
-                        inputMode="numeric"
-                      />
+                      <div className="otp-row">
+                        <input
+                          type="text"
+                          value={guardianForm.otp}
+                          onChange={(event) => {
+                            const otp = event.target.value.replace(/\D/g, "").slice(0, 6);
+                            setGuardianForm((form) => ({ ...form, otp }));
+                          }}
+                          placeholder="Enter OTP"
+                          inputMode="numeric"
+                          maxLength={6}
+                        />
+                        <button
+                          type="button"
+                          disabled={!guardianOtp}
+                          onClick={() => setGuardianForm((form) => ({ ...form, otp: guardianOtp }))}
+                        >
+                          Generate
+                        </button>
+                      </div>
+                      <small>{guardianOtp ? `Generated OTP: ${guardianOtp}` : "Enter a 10 digit number to generate OTP"}</small>
                     </div>
                     <div className="guardian-overlay">
                       <span>HIGH RISK</span>
