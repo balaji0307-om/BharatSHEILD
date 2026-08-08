@@ -607,6 +607,7 @@ export default function App() {
   const [privacyMode, setPrivacyMode] = useState(true);
   const [error, setError] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [guardianForm, setGuardianForm] = useState({ mobile: "", otp: "" });
   const recognitionRef = useRef(null);
 
   const scanSteps = ["Checking message", "Finding risk words", "Checking URL", "Checking domain", "Preparing review", "Generating report"];
@@ -679,7 +680,10 @@ export default function App() {
   }
 
   async function runAnalysis(input = content, channel = mode) {
-    if (!input.trim()) return;
+    if (!input.trim()) {
+      setError(channel === "qr" ? "Upload a QR image or paste decoded QR content first." : "Paste content first.");
+      return;
+    }
     playScanSound();
     setLoading(true);
     setError("");
@@ -795,15 +799,19 @@ export default function App() {
 
       if (!decoded) {
         setError("No QR code found. Try a clearer, uncropped QR image.");
+        event.target.value = "";
         return;
       }
 
       setMode("qr");
       setContent(decoded);
+      setResult(null);
       setError(autoScan ? "" : "QR decoded. Review the content, then click Analyze QR.");
       if (autoScan) runAnalysis(decoded, "qr");
     } catch {
       setError("Could not read this QR image. Try a clearer, uncropped QR image.");
+    } finally {
+      event.target.value = "";
     }
   }
 
@@ -1567,14 +1575,29 @@ export default function App() {
                     <div className="browser-bar"><span /> https://sbi-secure-login.example</div>
                     <div className="fake-page">
                       <strong>State Bank Secure Login</strong>
-                      <input readOnly value="Enter mobile number" />
-                      <input readOnly value="Enter OTP" />
+                      <input
+                        type="tel"
+                        value={guardianForm.mobile}
+                        onChange={(event) => setGuardianForm((form) => ({ ...form, mobile: event.target.value }))}
+                        placeholder="Enter mobile number"
+                        inputMode="numeric"
+                      />
+                      <input
+                        type="text"
+                        value={guardianForm.otp}
+                        onChange={(event) => setGuardianForm((form) => ({ ...form, otp: event.target.value }))}
+                        placeholder="Enter OTP"
+                        inputMode="numeric"
+                      />
                     </div>
                     <div className="guardian-overlay">
                       <span>HIGH RISK</span>
                       <h2>This site imitates SBI</h2>
-                      <p>Do not enter mobile number, OTP, password, or UPI PIN on this page.</p>
-                      <div className="toolrow compact-actions"><button className="danger-action">Leave Site</button><button>View Details</button></div>
+                      <p>{guardianForm.mobile || guardianForm.otp ? "Sensitive entry detected. Stop and use the official SBI app only." : "Do not enter mobile number, OTP, password, or UPI PIN on this page."}</p>
+                      <div className="toolrow compact-actions">
+                        <button className="danger-action" onClick={() => setGuardianForm({ mobile: "", otp: "" })}>Leave Site</button>
+                        <button onClick={() => setActiveSection("Scan")}>View Details</button>
+                      </div>
                     </div>
                   </div>
                   <div className="glass trust-meter-card">
