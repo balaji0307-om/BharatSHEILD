@@ -27,7 +27,7 @@ const modes = [
   ["news", "Fake News"],
 ];
 
-const navItems = ["Dashboard", "Scan", "Guardian", "Report Scam", "Awareness", "Emergency", "Live Scam Alerts", "History", "Settings"];
+const navItems = ["Dashboard", "Scan", "Guardian", "Report Scam", "Awareness", "Emergency", "Scam Awareness", "History", "Settings"];
 
 const modeMeta = {
   sms: { title: "Messages", sender: "SMS Alert", tone: "blue" },
@@ -42,10 +42,10 @@ const modeMeta = {
 };
 
 const threatIntel = [
-  ["Money protected", "INR 11,158 Cr", "Latest public update"],
-  ["People assisted", "32.80 lakh", "Complaint support"],
-  ["Fraud complaints", "53.87 lakh", "Recent period"],
-  ["Helpline", "1930", "Active nationwide"],
+  ["Scans analyzed", "127", "Demo workspace"],
+  ["Threats detected", "34", "From recent scans"],
+  ["Reports generated", "8", "Complaint drafts"],
+  ["Helpline", "1930", "Emergency support"],
 ];
 
 const stateCaseData = [
@@ -145,6 +145,39 @@ function getStoredCases() {
 
 function saveCases(items) {
   localStorage.setItem("bharatshield_cases", JSON.stringify(items.slice(0, 50)));
+}
+
+function authHeaders(token, extra = {}) {
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
+async function fetchBackendCases(owner, token) {
+  const query = owner ? `?owner=${encodeURIComponent(owner)}` : "";
+  const response = await fetch(`${API_BASE}/api/cases${query}`, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) throw new Error("Could not load cases.");
+  return response.json();
+}
+
+async function saveBackendCase(item, token) {
+  const response = await fetch(`${API_BASE}/api/cases`, {
+    method: "POST",
+    headers: authHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ case: item }),
+  });
+  if (!response.ok) throw new Error("Could not save case.");
+  return response.json();
+}
+
+async function patchBackendCase(caseId, patch, token) {
+  const response = await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}`, {
+    method: "PATCH",
+    headers: authHeaders(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) throw new Error("Could not update case.");
+  return response.json();
 }
 
 function makeCaseId() {
@@ -456,6 +489,23 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [session]);
 
+  useEffect(() => {
+    if (!session?.user?.email) return;
+    let cancelled = false;
+    fetchBackendCases(session.user.email, session.token)
+      .then((data) => {
+        if (cancelled || !Array.isArray(data.cases) || !data.cases.length) return;
+        setCases(data.cases);
+        saveCases(data.cases);
+      })
+      .catch(() => {
+        // Keep local cases for offline demo mode.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.email, session?.token]);
+
   const trends = useMemo(() => {
     return history.reduce((acc, item) => {
       const key = item.scam_type || "Unknown";
@@ -506,6 +556,7 @@ export default function App() {
       saveHistory(nextHistory);
       setCases(nextCases);
       saveCases(nextCases);
+      saveBackendCase(nextCases[0], session?.token).catch(() => {});
     } catch (err) {
       const fallback = clientAnalysis(input, channel);
       setResult(fallback);
@@ -515,6 +566,7 @@ export default function App() {
       saveHistory(nextHistory);
       setCases(nextCases);
       saveCases(nextCases);
+      saveBackendCase(nextCases[0], session?.token).catch(() => {});
       setError("");
     } finally {
       setTimeout(() => setLoading(false), 420);
@@ -618,6 +670,7 @@ export default function App() {
 
   function updateCase(caseId, field, value) {
     const reviewedAt = new Date().toISOString();
+    let updatedCase = null;
     const nextCases = cases.map((item) => {
       if (item.case_id !== caseId) return item;
       const investigation = {
@@ -629,10 +682,25 @@ export default function App() {
       const timeline = field === "status"
         ? [...item.timeline, { label: `Marked ${value}`, time: reviewedAt }]
         : item.timeline;
-      return { ...item, investigation, timeline };
+      updatedCase = { ...item, investigation, timeline };
+      return updatedCase;
     });
     setCases(nextCases);
     saveCases(nextCases);
+    if (updatedCase) {
+      patchBackendCase(caseId, {
+        status: updatedCase.investigation.status,
+        note: updatedCase.investigation.note,
+        reviewed_by: updatedCase.investigation.reviewed_by,
+      }, session?.token)
+        .then((data) => {
+          if (!data.case) return;
+          const synced = nextCases.map((item) => item.case_id === caseId ? data.case : item);
+          setCases(synced);
+          saveCases(synced);
+        })
+        .catch(() => {});
+    }
   }
 
   function caseReportText(item) {
@@ -683,15 +751,25 @@ export default function App() {
       downloadBlob(html, `${item.case_id}.html`, "text/html");
       return;
     }
-    const reportWindow = window.open("", "_blank", "noopener,noreferrer");
-    if (reportWindow) {
-      reportWindow.document.write(html);
-      reportWindow.document.close();
-      reportWindow.focus();
-      reportWindow.print();
-    } else {
-      downloadBlob(html, `${item.case_id}.html`, "text/html");
-    }
+    fetch(`${API_BASE}/api/cases/${encodeURIComponent(item.case_id)}/report.pdf`, {
+      headers: authHeaders(session?.token),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("PDF unavailable.");
+        return response.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${item.case_id}.pdf`;
+        link.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch(() => {
+        downloadBlob(html, `${item.case_id}.html`, "text/html");
+      });
+    return;
   }
 
   function downloadBlob(text, filename, type) {
@@ -894,7 +972,7 @@ export default function App() {
               <p>{activeSection === "Dashboard" ? "Stay alert, stay safe from digital scams." : "Manage your digital safety here."}</p>
             </div>
             <div className="header-icons">
-              <button type="button" onClick={() => setActiveSection("Live Scam Alerts")}>Alerts</button>
+              <button type="button" onClick={() => setActiveSection("Scam Awareness")}>Alerts</button>
               <div className="profile-menu">
                 <button type="button" title={session.user?.name || "User"} onClick={() => setProfileOpen((open) => !open)}>
                   {(session.user?.name || "User").slice(0, 1).toUpperCase()}
@@ -914,9 +992,9 @@ export default function App() {
 
           <section className={activeSection === "Dashboard" ? "stat-strip" : "stat-strip section-hidden"}>
             <div><span>Safety Score</span><strong>{safetyScore}</strong><small>Higher is safer</small></div>
-            <div><span>Money Protected</span><strong>INR 11,158 Cr</strong><small>Latest public update</small></div>
-            <div><span>Weekly Risk Trend</span><strong>{score >= 70 ? "Rising" : "Stable"}</strong><small>Based on scan history</small></div>
-            <div><span>Latest Scam Alert</span><strong>Digital Arrest</strong><small>High priority</small></div>
+            <div><span>Threats Detected</span><strong>{Math.max(caseCounts.suspected + caseCounts.review, history.filter((item) => (item.score || 0) >= 55).length)}</strong><small>From this workspace</small></div>
+            <div><span>Reports Ready</span><strong>{cases.length}</strong><small>Security cases</small></div>
+            <div><span>Latest Alert</span><strong>Digital Arrest</strong><small>Awareness item</small></div>
           </section>
 
           <section className={activeSection === "Dashboard" ? "activity-strip" : "activity-strip section-hidden"}>
@@ -1434,9 +1512,9 @@ export default function App() {
               </>
             )}
 
-            {activeSection === "Live Scam Alerts" && (
+            {activeSection === "Scam Awareness" && (
               <>
-                <div className="section-head wide-head"><h2>Live Scam Alerts</h2><button>Latest Alerts</button></div>
+                <div className="section-head wide-head"><h2>Scam Awareness Alerts</h2><button>Curated Alerts</button></div>
                 <div className="alerts-grid">
                   {liveAlerts.map(([title, risk, region, tip]) => (
                     <div className="glass alert-card" key={title}>
@@ -1495,7 +1573,7 @@ export default function App() {
                   <div className="glass">
                     <h2>Safe Uploads</h2>
                     <p>Allowed files: jpg, png, pdf, txt, mp3, wav, m4a. Executables, APKs, batch files, and zip archives are blocked.</p>
-                    <p className="secure-note">Files are reviewed locally in the browser flow and marked for deletion after {autoDelete}.</p>
+                    <p className="secure-note">Files are only used for the selected scan or report draft in this demo flow.</p>
                   </div>
                   <div className="glass">
                     <h2>Account Safety</h2>

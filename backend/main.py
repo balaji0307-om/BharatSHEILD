@@ -3,6 +3,8 @@ import re
 import secrets
 import sqlite3
 import hashlib
+import json
+from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,9 +13,20 @@ from time import time
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+except Exception:  # pragma: no cover - deployment installs reportlab, fallback keeps API alive locally.
+    A4 = None
+    getSampleStyleSheet = None
+    Paragraph = None
+    SimpleDocTemplate = None
+    Spacer = None
 
 
 app = FastAPI(title="BharatSHIELD")
@@ -57,6 +70,16 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=6)
 
 
+class CaseCreateRequest(BaseModel):
+    case: dict[str, Any]
+
+
+class CaseUpdateRequest(BaseModel):
+    status: str | None = None
+    note: str | None = None
+    reviewed_by: str | None = None
+
+
 DB_PATH = Path(__file__).with_name("bharatshield.db")
 
 
@@ -75,7 +98,23 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+        columns = [row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "role" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS security_cases (
+                case_id TEXT PRIMARY KEY,
+                owner_email TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """
         )
@@ -94,6 +133,24 @@ def verify_password(password: str, stored: str) -> bool:
 
 def make_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+SESSION_TOKENS: dict[str, dict[str, Any]] = {}
+
+
+def create_session(user: dict[str, Any]) -> dict[str, Any]:
+    token = make_token()
+    SESSION_TOKENS[token] = user
+    return {"token": token, "user": user}
+
+
+def auth_user(request: Request) -> dict[str, Any]:
+    header = request.headers.get("authorization", "")
+    token = header.removeprefix("Bearer ").strip() if header.lower().startswith("bearer ") else ""
+    user = SESSION_TOKENS.get(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Login required.")
+    return user
 
 
 init_db()
@@ -455,34 +512,222 @@ def signup(request: SignupRequest) -> dict[str, Any]:
     try:
         with get_db() as conn:
             conn.execute(
-                "INSERT INTO users (name, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
-                (name, email, hash_password(request.password), datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",
+                (name, email, hash_password(request.password), "user", datetime.now(timezone.utc).isoformat()),
             )
-            row = conn.execute("SELECT id, name, email FROM users WHERE email = ?", (email,)).fetchone()
+            row = conn.execute("SELECT id, name, email, role FROM users WHERE email = ?", (email,)).fetchone()
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="This email is already signed up. Please login.")
 
-    return {
-        "token": make_token(),
-        "user": {"id": row["id"], "name": row["name"], "email": row["email"]},
-        "message": "Signup successful.",
-    }
+    session = create_session({"id": row["id"], "name": row["name"], "email": row["email"], "role": row["role"]})
+    return {**session, "message": "Signup successful."}
 
 
 @app.post("/api/login")
 def login(request: LoginRequest) -> dict[str, Any]:
     email = request.email.strip().lower()
     with get_db() as conn:
-        row = conn.execute("SELECT id, name, email, password_hash FROM users WHERE email = ?", (email,)).fetchone()
+        row = conn.execute("SELECT id, name, email, role, password_hash FROM users WHERE email = ?", (email,)).fetchone()
 
     if not row or not verify_password(request.password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="No signed-up user found with these credentials.")
 
+    session = create_session({"id": row["id"], "name": row["name"], "email": row["email"], "role": row["role"]})
+    return {**session, "message": "Login successful."}
+
+
+def normalize_case(case: dict[str, Any]) -> dict[str, Any]:
+    case_id = str(case.get("case_id") or f"BS-{secrets.randbelow(9000) + 1000}")
+    owner = str(case.get("owner") or "local-user").strip().lower()
+    now = datetime.now(timezone.utc).isoformat()
+    investigation = case.get("investigation") if isinstance(case.get("investigation"), dict) else {}
+    status = str(investigation.get("status") or case.get("status") or "Suspected")
+    timeline = case.get("timeline") if isinstance(case.get("timeline"), list) else []
+    if not timeline:
+        timeline = [{"label": "Case created", "time": now}]
     return {
-        "token": make_token(),
-        "user": {"id": row["id"], "name": row["name"], "email": row["email"]},
-        "message": "Login successful.",
+        **case,
+        "case_id": case_id,
+        "owner": owner,
+        "investigation": {
+            "status": status,
+            "note": investigation.get("note") or "",
+            "reviewed_by": investigation.get("reviewed_by"),
+            "reviewed_at": investigation.get("reviewed_at"),
+        },
+        "timeline": timeline,
+        "created_at": case.get("created_at") or now,
     }
+
+
+def save_security_case(case: dict[str, Any]) -> dict[str, Any]:
+    normalized = normalize_case(case)
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO security_cases (case_id, owner_email, payload, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(case_id) DO UPDATE SET
+                owner_email = excluded.owner_email,
+                payload = excluded.payload,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            """,
+            (
+                normalized["case_id"],
+                normalized["owner"],
+                json.dumps(normalized),
+                normalized["investigation"]["status"],
+                normalized["created_at"],
+                now,
+            ),
+        )
+    return normalized
+
+
+def get_security_case(case_id: str) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT payload FROM security_cases WHERE case_id = ?", (case_id,)).fetchone()
+    return json.loads(row["payload"]) if row else None
+
+
+def case_text(case: dict[str, Any]) -> str:
+    ai = case.get("ai_result", {})
+    investigation = case.get("investigation", {})
+    timeline = case.get("timeline", [])
+    reasons = ai.get("reasons") or ["No major risk signals found."]
+    return "\n".join([
+        "BharatSHIELD Security Investigation Report",
+        "",
+        f"Case ID: {case.get('case_id')}",
+        f"Threat Type: {case.get('type')}",
+        f"Channel: {case.get('channel')}",
+        f"Detected Content: {case.get('input')}",
+        f"Risk Level: {ai.get('risk')}",
+        f"Risk Score: {ai.get('score')}%",
+        f"Confidence: {ai.get('confidence')}%",
+        "",
+        "AI Analysis:",
+        str(ai.get("explanation") or "Security review completed."),
+        "",
+        "Detection Reasons:",
+        *[f"- {reason}" for reason in reasons],
+        "",
+        f"Investigation Status: {investigation.get('status')}",
+        f"Investigator Note: {investigation.get('note') or 'No note added.'}",
+        f"Reviewed By: {investigation.get('reviewed_by') or 'Not reviewed'}",
+        "",
+        "Evidence Timeline:",
+        *[f"- {item.get('time')}: {item.get('label')}" for item in timeline],
+        "",
+        "Recommendation:",
+        "Do not share OTP, PIN, passwords, card details, or approve unknown payment requests.",
+        "",
+        "Generated by BharatSHIELD",
+    ])
+
+
+def minimal_pdf_bytes(text: str) -> bytes:
+    safe = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    lines = safe.splitlines()[:48]
+    stream = "BT /F1 11 Tf 42 790 Td " + " T* ".join(f"({line}) Tj" for line in lines) + " ET"
+    objects = [
+        "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+        "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
+        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj",
+        "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
+        f"5 0 obj << /Length {len(stream.encode('latin-1', 'ignore'))} >> stream\n{stream}\nendstream endobj",
+    ]
+    pdf = "%PDF-1.4\n"
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(pdf.encode("latin-1")))
+        pdf += obj + "\n"
+    xref = len(pdf.encode("latin-1"))
+    pdf += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n"
+    pdf += "".join(f"{offset:010d} 00000 n \n" for offset in offsets[1:])
+    pdf += f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
+    return pdf.encode("latin-1", "ignore")
+
+
+def render_case_pdf(case: dict[str, Any]) -> bytes:
+    text = case_text(case)
+    if not SimpleDocTemplate:
+        return minimal_pdf_bytes(text)
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, title=f"{case.get('case_id')} BharatSHIELD Report")
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("BharatSHIELD Security Investigation Report", styles["Title"]),
+        Spacer(1, 12),
+    ]
+    for line in text.splitlines()[2:]:
+        story.append(Paragraph(line or "&nbsp;", styles["BodyText"]))
+        story.append(Spacer(1, 4))
+    doc.build(story)
+    return buffer.getvalue()
+
+
+@app.get("/api/cases")
+def list_cases(request: Request, owner: str | None = None) -> dict[str, Any]:
+    user = auth_user(request)
+    role = user.get("role", "user")
+    if role == "user":
+        owner = user["email"]
+    query = "SELECT payload FROM security_cases"
+    params: tuple[Any, ...] = ()
+    if owner:
+        query += " WHERE owner_email = ?"
+        params = (owner.strip().lower(),)
+    query += " ORDER BY updated_at DESC LIMIT 100"
+    with get_db() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return {"cases": [json.loads(row["payload"]) for row in rows]}
+
+
+@app.post("/api/cases")
+def create_case(payload: CaseCreateRequest, request: Request) -> dict[str, Any]:
+    user = auth_user(request)
+    case = {**payload.case, "owner": user["email"]}
+    return {"case": save_security_case(case)}
+
+
+@app.patch("/api/cases/{case_id}")
+def update_case_api(case_id: str, payload: CaseUpdateRequest, request: Request) -> dict[str, Any]:
+    user = auth_user(request)
+    case = get_security_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    if user.get("role") == "user" and case.get("owner") != user.get("email"):
+        raise HTTPException(status_code=403, detail="You can only update your own cases.")
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+    investigation = case.get("investigation", {})
+    if payload.status:
+        investigation["status"] = payload.status
+        case["timeline"] = [*case.get("timeline", []), {"label": f"Marked {payload.status}", "time": reviewed_at}]
+    if payload.note is not None:
+        investigation["note"] = payload.note
+    investigation["reviewed_by"] = payload.reviewed_by or user.get("name") or investigation.get("reviewed_by")
+    investigation["reviewed_at"] = reviewed_at
+    case["investigation"] = investigation
+    return {"case": save_security_case(case)}
+
+
+@app.get("/api/cases/{case_id}/report.pdf")
+def case_report_pdf(case_id: str, request: Request) -> Response:
+    user = auth_user(request)
+    case = get_security_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    if user.get("role") == "user" and case.get("owner") != user.get("email"):
+        raise HTTPException(status_code=403, detail="You can only download your own case reports.")
+    pdf = render_case_pdf(case)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{case_id}.pdf"'},
+    )
 
 
 @app.post("/api/analyze")

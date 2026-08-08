@@ -27,7 +27,7 @@ BharatSHIELD focuses on three outcomes:
 - Decodes QR images and reviews QR payloads before opening payment or website links.
 - Reviews call transcripts for OTP requests, threat language, urgency, and social engineering.
 - Generates a risk score, confidence score, evidence highlights, and recommended actions.
-- Creates security cases with status tracking, notes, timelines, and export options.
+- Creates backend-backed security cases with status tracking, notes, timelines, and export options.
 - Provides emergency guidance for active fraud situations, including helpline 1930 and cybercrime portal support.
 - Includes a Guardian page that demonstrates browser-style warning overlays for fake login pages.
 
@@ -91,6 +91,18 @@ The reporting flow helps users prepare complaint material:
 - Download complaint draft
 - Open the official cybercrime portal
 
+### Security Cases
+
+Every scan can create a structured security case:
+
+- Case ID
+- Owner email
+- AI verdict
+- Investigation status
+- Investigator notes
+- Evidence timeline
+- CSV, HTML, and PDF report export
+
 ### Emergency Help
 
 For active fraud situations, BharatSHIELD provides:
@@ -108,11 +120,12 @@ For active fraud situations, BharatSHIELD provides:
 BharatSHIELD is built with a privacy-first demo architecture:
 
 - User accounts use hashed passwords in the backend.
+- Security cases are stored in SQLite through FastAPI APIs.
 - CORS is configured for local and deployed Render origins.
 - API rate limiting is included to reduce abuse.
 - Secure response headers are added by the backend.
 - Upload controls reject unsafe file types such as executables, APKs, batch files, and zip archives.
-- Sensitive evidence is treated as temporary review data in the user flow.
+- Uploaded evidence is used only for the selected scan or report draft in this demo flow.
 - The app does not request contacts, photos, location, OTPs, passwords, or background microphone permissions for scanning.
 
 This project provides AI-assisted risk estimation for awareness and prevention. It is not an official cybersecurity verification service.
@@ -128,6 +141,7 @@ This project provides AI-assisted risk estimation for awareness and prevention. 
 | AI | Gemini API support with rule-engine fallback |
 | QR Analysis | jsQR and browser BarcodeDetector support |
 | Authentication | SQLite, password hashing, local demo fallback |
+| Case Reports | SQLite case store, CSV/HTML export, PDF endpoint |
 | Deployment | Render |
 | Version Control | Git and GitHub |
 
@@ -146,7 +160,8 @@ FastAPI Backend
     |-- optional Gemini analysis
     |-- URL and QR checks
     |-- authentication
-    |-- security case response
+    |-- security case database
+    |-- PDF report endpoint
 ```
 
 ---
@@ -226,7 +241,7 @@ For Render or similar hosting:
 - Stronger domain reputation checks
 - Real-time phishing page comparison
 - Community scam reputation database
-- PDF complaint generation with evidence snapshots
+- Evidence snapshots in generated reports
 - Multi-language safety guidance
 
 ---
@@ -236,4 +251,3 @@ For Render or similar hosting:
 **Care Coders**
 
 Built for hackathon demonstration with a focus on practical cyber safety, explainable AI, and user-first scam prevention.
-
