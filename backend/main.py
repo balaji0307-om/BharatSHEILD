@@ -296,6 +296,24 @@ def similarity_hint(domain: str) -> dict[str, Any] | None:
     return None
 
 
+def count_previous_payee_reports(upi_id: str, fingerprint: str) -> int:
+    if not upi_id and not fingerprint:
+        return 0
+    upi_key = upi_id.lower()
+    fingerprint_key = fingerprint.lower()
+    count = 0
+    with get_db() as conn:
+        rows = conn.execute("SELECT payload FROM security_cases").fetchall()
+    for row in rows:
+        try:
+            payload_text = json.dumps(json.loads(row["payload"])).lower()
+        except Exception:
+            continue
+        if (upi_key and upi_key in payload_text) or (fingerprint_key and fingerprint_key in payload_text):
+            count += 1
+    return count
+
+
 def inspect_qr_payload(text: str) -> dict[str, Any]:
     raw = text.strip()
     parsed = urlparse(raw)
@@ -340,7 +358,8 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
             risk_signals.append("Recipient contains a long numeric pattern")
         trusted_handles = {
             "okaxis", "okicici", "oksbi", "okhdfcbank", "ybl", "ibl", "axl",
-            "paytm", "upi", "sbi", "icici", "hdfcbank", "axisbank", "yesbank",
+            "paytm", "ptaxis", "ptsbi", "ptyes", "pthdfc", "upi", "sbi",
+            "icici", "hdfcbank", "axisbank", "yesbank",
         }
         if upi_handle and upi_handle.lower() not in trusted_handles:
             score += 14
@@ -373,9 +392,19 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         if any(word in merchant.lower() for word in ("refund", "support", "kyc", "verification", "bank", "helpdesk")):
             score += 20
             risk_signals.append("Merchant name uses refund/support/KYC terms")
+        merchant_tokens = set(re.findall(r"[a-z]{3,}", merchant.lower()))
+        local_tokens = set(re.findall(r"[a-z]{3,}", upi_local.lower()))
         if upi_id and re.fullmatch(r"\d{8,}", upi_local or "") and re.search(r"[a-zA-Z]{3,}", merchant):
-            score += 6
-            risk_signals.append("Personal merchant name is attached to a numeric UPI ID")
+            score += 14
+            checks.append({"label": "Name match", "result": "Cannot match numeric UPI ID with merchant name"})
+            risk_signals.append("Merchant name does not match the numeric UPI ID")
+        elif merchant_tokens and local_tokens and merchant_tokens.isdisjoint(local_tokens):
+            score += 12
+            checks.append({"label": "Name match", "result": "Merchant name differs from UPI ID text"})
+            risk_signals.append("Merchant name and UPI ID text do not match")
+        elif merchant_tokens and local_tokens:
+            score = max(0, score - 4)
+            checks.append({"label": "Name match", "result": "Merchant name partially matches UPI ID"})
     else:
         checks.append({"label": "Merchant name", "result": "Not provided"})
 
@@ -401,28 +430,23 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         parsed.path.lower(),
     ])
     fingerprint = "BS-QR-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8].upper()
-    reported_patterns = {
-        "fake-support@upi": 7,
-        "support-refund@upi": 14,
-        "refunddesk@upi": 9,
-    }
-    previous_reports = reported_patterns.get(upi_id.lower(), 0)
+    previous_reports = count_previous_payee_reports(upi_id, fingerprint)
     if previous_reports:
-        score += 24
-        risk_signals.append(f"Recipient has {previous_reports} previous demo reports")
+        score += min(30, 12 + previous_reports * 6)
+        risk_signals.append(f"Recipient matched {previous_reports} previous BharatSHIELD case(s)")
     elif upi_id:
         recipient_hash = int(hashlib.sha256(upi_id.lower().encode("utf-8")).hexdigest()[:4], 16)
         recipient_bucket = recipient_hash % 25
         if recipient_bucket >= 18:
-            previous_reports = 2 + (recipient_hash % 4)
-            score += 12 + recipient_bucket + previous_reports
-            risk_signals.append("Local reputation model found similar risky payee patterns")
+            score += 10 + recipient_bucket
+            risk_signals.append("UPI fingerprint pattern needs extra review")
         elif recipient_bucket >= 11:
             score += 8 + recipient_bucket
-            risk_signals.append("Local reputation model marked payee for review")
+            risk_signals.append("UPI fingerprint pattern marked for review")
         else:
             score += recipient_bucket
-        checks.append({"label": "Payee risk model", "result": f"{recipient_bucket}/24 based on UPI ID fingerprint"})
+        checks.append({"label": "Payee fingerprint", "result": f"{recipient_bucket}/24 risk variance"})
+    checks.append({"label": "Previous BharatSHIELD reports", "result": str(previous_reports)})
 
     if not checks:
         checks.append({"label": "QR content", "result": "No UPI/payment fields detected"})

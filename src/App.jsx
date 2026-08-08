@@ -336,15 +336,20 @@ function parseQrPayload(text) {
     for (let index = 0; index < upiId.length; index += 1) {
       payeeHash = ((payeeHash << 5) - payeeHash + upiId.toLowerCase().charCodeAt(index)) >>> 0;
     }
-    const trustedHandles = ["okaxis", "okicici", "oksbi", "okhdfcbank", "ybl", "ibl", "axl", "paytm", "upi", "sbi", "icici", "hdfcbank", "axisbank", "yesbank"];
+    const trustedHandles = ["okaxis", "okicici", "oksbi", "okhdfcbank", "ybl", "ibl", "axl", "paytm", "ptaxis", "ptsbi", "ptyes", "pthdfc", "upi", "sbi", "icici", "hdfcbank", "axisbank", "yesbank"];
     const digits = upiLocal.replace(/\D/g, "");
     const payeeRisk = upiId ? payeeHash % 25 : 0;
-    const previousReports = upiId && payeeRisk >= 18 ? 2 + (payeeHash % 4) : 0;
+    const previousReports = countLocalPayeeReports(upiId, `BS-QR-${hash.toString(16).toUpperCase().padStart(8, "0").slice(0, 8)}`);
     const riskSignals = [];
     if (digits.length >= 10) riskSignals.push("Mobile-number style UPI ID");
     if (upiHandle && !trustedHandles.includes(upiHandle.toLowerCase())) riskSignals.push("Uncommon UPI provider handle");
     if (/refund|support|kyc|verify|fee|urgent|blocked|otp|pin/i.test(`${upiId} ${merchant} ${note}`)) riskSignals.push("Payment text contains pressure terms");
-    if (previousReports) riskSignals.push("Similar risky payee patterns found locally");
+    if (previousReports) riskSignals.push(`Matched ${previousReports} previous BharatSHIELD case(s)`);
+    const merchantTokens = new Set((merchant.toLowerCase().match(/[a-z]{3,}/g) || []));
+    const localTokens = new Set((upiLocal.toLowerCase().match(/[a-z]{3,}/g) || []));
+    const nameMismatch = Boolean(upiId && /^\d{8,}$/.test(upiLocal) && /[a-zA-Z]{3,}/.test(merchant))
+      || Boolean(merchantTokens.size && localTokens.size && [...merchantTokens].every((token) => !localTokens.has(token)));
+    if (nameMismatch) riskSignals.push("Merchant name and UPI ID do not match");
     return {
       upi_id: upiId || "Not found",
       merchant: merchant || "Not found",
@@ -355,6 +360,7 @@ function parseQrPayload(text) {
       recipient_reputation: previousReports ? "Suspicious" : payeeRisk >= 11 ? "Review" : upiId ? "Unknown" : "Not applicable",
       previous_reports: previousReports,
       payee_risk_score: payeeRisk,
+      name_mismatch: nameMismatch,
       risk_signals: riskSignals,
     };
   } catch {
@@ -368,8 +374,23 @@ function parseQrPayload(text) {
       recipient_reputation: "Unknown",
       previous_reports: 0,
       payee_risk_score: 0,
+      name_mismatch: false,
       risk_signals: [],
     };
+  }
+}
+
+function countLocalPayeeReports(upiId, fingerprint) {
+  try {
+    const cases = JSON.parse(localStorage.getItem("bharatshield_cases") || "[]");
+    const upiKey = (upiId || "").toLowerCase();
+    const fingerprintKey = (fingerprint || "").toLowerCase();
+    return cases.filter((item) => {
+      const blob = JSON.stringify(item).toLowerCase();
+      return (upiKey && blob.includes(upiKey)) || (fingerprintKey && blob.includes(fingerprintKey));
+    }).length;
+  } catch {
+    return 0;
   }
 }
 
@@ -443,8 +464,9 @@ function clientAnalysis(text, channel) {
       + (Number.parseFloat(qrPayload.amount) >= 1000 ? 10 : Number.parseFloat(qrPayload.amount) > 0 ? 3 : 0)
       + (qrPayload.hidden_redirect ? 18 : 0)
       + (qrPayload.upi_id !== "Not found" && /^\d{10,}@/i.test(qrPayload.upi_id) ? 16 : 0)
-      + (qrPayload.upi_id !== "Not found" && !/@(okaxis|okicici|oksbi|okhdfcbank|ybl|ibl|axl|paytm|upi|sbi|icici|hdfcbank|axisbank|yesbank)$/i.test(qrPayload.upi_id) ? 14 : 0)
-      + (qrPayload.previous_reports ? 12 + (qrPayload.payee_risk_score || 0) + qrPayload.previous_reports : qrPayload.payee_risk_score >= 11 ? 8 + qrPayload.payee_risk_score : qrPayload.payee_risk_score || 0)
+      + (qrPayload.upi_id !== "Not found" && !/@(okaxis|okicici|oksbi|okhdfcbank|ybl|ibl|axl|paytm|ptaxis|ptsbi|ptyes|pthdfc|upi|sbi|icici|hdfcbank|axisbank|yesbank)$/i.test(qrPayload.upi_id) ? 14 : 0)
+      + (qrPayload.name_mismatch ? 14 : 0)
+      + (qrPayload.previous_reports ? Math.min(30, 12 + qrPayload.previous_reports * 6) : qrPayload.payee_risk_score >= 18 ? 10 + qrPayload.payee_risk_score : qrPayload.payee_risk_score >= 11 ? 8 + qrPayload.payee_risk_score : qrPayload.payee_risk_score || 0)
     : 0;
   const score = Math.min(96, 12 + hits.reduce((sum, [, weight]) => sum + weight, 0) + (channel === "url" ? 8 : 0) + qrRiskBoost);
   const scamType = channel === "qr" && qrPayload?.upi_id !== "Not found" ? (score >= 55 ? "UPI QR Fraud Risk" : "UPI QR Review") : lowered.includes("job") || lowered.includes("hiring") ? "Fake Job" : lowered.includes("investment") || lowered.includes("double your money") ? "Investment Scam" : lowered.includes("http") || channel === "url" ? "Phishing" : "Suspicious Message";
