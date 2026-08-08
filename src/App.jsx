@@ -124,6 +124,8 @@ const trustChecks = ["HTTPS Secured", "Data Encrypted", "API Protected", "Privac
 const deniedPermissions = ["Contacts", "Photos", "Location", "OTP", "Passwords", "Background microphone"];
 const autoDeleteOptions = ["30 Minutes", "1 Hour", "24 Hours", "Never"];
 const allowedEvidence = [".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp3", ".wav", ".m4a"];
+const caseStatuses = ["Suspected", "Verified", "Needs Review"];
+const caseRoles = ["User", "Investigator", "Reviewer", "Admin", "Authority"];
 
 function isAllowedEvidence(fileName) {
   const lower = fileName.toLowerCase();
@@ -140,6 +142,54 @@ function getStoredHistory() {
 
 function saveHistory(items) {
   localStorage.setItem("bharatshield_history", JSON.stringify(items.slice(0, 30)));
+}
+
+function getStoredCases() {
+  try {
+    return JSON.parse(localStorage.getItem("bharatshield_cases") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveCases(items) {
+  localStorage.setItem("bharatshield_cases", JSON.stringify(items.slice(0, 50)));
+}
+
+function makeCaseId() {
+  return `BS-${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+function buildSecurityCase(analysis, input, channel, user) {
+  const createdAt = new Date().toISOString();
+  const status = analysis.score >= 70 ? "Suspected" : analysis.score >= 35 ? "Needs Review" : "Verified";
+  return {
+    case_id: analysis.case_id || makeCaseId(),
+    type: analysis.scam_type || "Security Review",
+    channel,
+    input,
+    owner: user?.email || "local-user",
+    ai_result: {
+      risk: analysis.risk,
+      score: analysis.score,
+      confidence: analysis.confidence,
+      explanation: analysis.what_we_found || analysis.explanation || "Security review completed.",
+      reasons: (analysis.signals || []).slice(0, 6).map((item) => `${item.label}: ${item.reason}`),
+    },
+    investigation: {
+      status,
+      note: "",
+      reviewed_by: null,
+      reviewed_at: null,
+    },
+    timeline: [
+      { label: "Content submitted", time: createdAt },
+      { label: "Analysis completed", time: createdAt },
+      { label: `${analysis.risk || "Medium"} risk detected`, time: createdAt },
+      { label: `Case marked ${status}`, time: createdAt },
+    ],
+    created_at: createdAt,
+  };
 }
 
 function getStoredSession() {
@@ -351,6 +401,7 @@ export default function App() {
   const [content, setContent] = useState(samples.whatsapp);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState(getStoredHistory);
+  const [cases, setCases] = useState(getStoredCases);
   const [loading, setLoading] = useState(false);
   const [scanStep, setScanStep] = useState(0);
   const [showReport, setShowReport] = useState(false);
@@ -365,6 +416,8 @@ export default function App() {
   const [autoScan, setAutoScan] = useState(false);
   const [activeSection, setActiveSection] = useState("Dashboard");
   const [reportType, setReportType] = useState("UPI Fraud");
+  const [caseStatusFilter, setCaseStatusFilter] = useState("All");
+  const [caseRole, setCaseRole] = useState("Investigator");
   const [evidenceFile, setEvidenceFile] = useState("");
   const [autoDelete, setAutoDelete] = useState("1 Hour");
   const [notificationsOn, setNotificationsOn] = useState(true);
@@ -403,6 +456,20 @@ export default function App() {
     }, {});
   }, [history]);
 
+  const visibleCases = useMemo(() => {
+    const roleCases = caseRole === "User" ? cases.filter((item) => item.owner === session?.user?.email) : cases;
+    return caseStatusFilter === "All" ? roleCases : roleCases.filter((item) => item.investigation.status === caseStatusFilter);
+  }, [caseRole, caseStatusFilter, cases, session?.user?.email]);
+
+  const caseCounts = useMemo(() => {
+    return {
+      total: cases.length,
+      suspected: cases.filter((item) => item.investigation.status === "Suspected").length,
+      verified: cases.filter((item) => item.investigation.status === "Verified").length,
+      review: cases.filter((item) => item.investigation.status === "Needs Review").length,
+    };
+  }, [cases]);
+
   function selectMode(nextMode) {
     setMode(nextMode);
     setContent(samples[nextMode] || "");
@@ -426,14 +493,20 @@ export default function App() {
       const data = await response.json();
       setResult(data);
       const nextHistory = [{ ...data, mode: channel, preview: input.slice(0, 120) }, ...history];
+      const nextCases = [buildSecurityCase(data, input, channel, session?.user), ...cases];
       setHistory(nextHistory);
       saveHistory(nextHistory);
+      setCases(nextCases);
+      saveCases(nextCases);
     } catch (err) {
       const fallback = clientAnalysis(input, channel);
       setResult(fallback);
       const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
+      const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
       setHistory(nextHistory);
       saveHistory(nextHistory);
+      setCases(nextCases);
+      saveCases(nextCases);
       setError("");
     } finally {
       setTimeout(() => setLoading(false), 420);
@@ -533,6 +606,94 @@ export default function App() {
   function clearHistory() {
     setHistory([]);
     saveHistory([]);
+  }
+
+  function updateCase(caseId, field, value) {
+    const reviewedAt = new Date().toISOString();
+    const nextCases = cases.map((item) => {
+      if (item.case_id !== caseId) return item;
+      const investigation = {
+        ...item.investigation,
+        [field]: value,
+        reviewed_by: session?.user?.name || caseRole,
+        reviewed_at: reviewedAt,
+      };
+      const timeline = field === "status"
+        ? [...item.timeline, { label: `Marked ${value}`, time: reviewedAt }]
+        : item.timeline;
+      return { ...item, investigation, timeline };
+    });
+    setCases(nextCases);
+    saveCases(nextCases);
+  }
+
+  function caseReportText(item) {
+    return [
+      "BHARATSHIELD",
+      "Security Investigation Report",
+      "",
+      `Case ID: ${item.case_id}`,
+      `Threat Type: ${item.type}`,
+      `Detected Content: ${item.input}`,
+      `AI Risk Score: ${item.ai_result.score}%`,
+      `Risk Level: ${item.ai_result.risk}`,
+      `AI Confidence: ${item.ai_result.confidence}%`,
+      "",
+      "AI Analysis:",
+      item.ai_result.explanation,
+      "",
+      "Detection Reasons:",
+      ...(item.ai_result.reasons.length ? item.ai_result.reasons : ["No major risk signals found."]).map((reason) => `- ${reason}`),
+      "",
+      `Investigation Status: ${item.investigation.status}`,
+      `Investigator Note: ${item.investigation.note || "No note added."}`,
+      `Reviewed By: ${item.investigation.reviewed_by || "Not reviewed"}`,
+      "",
+      "Evidence Timeline:",
+      ...item.timeline.map((entry) => `- ${new Date(entry.time).toLocaleString()}: ${entry.label}`),
+      "",
+      "Recommendation:",
+      "Do not share OTP, PIN, passwords, card details, or approve unknown payment requests.",
+      "",
+      `Generated At: ${new Date().toLocaleString()}`,
+      "Generated by BharatSHIELD",
+    ].join("\n");
+  }
+
+  function downloadCaseReport(item, format = "pdf") {
+    const text = caseReportText(item);
+    const html = `<html><head><title>${item.case_id}</title><style>body{font-family:Arial,sans-serif;padding:28px;line-height:1.5;color:#142233}pre{white-space:pre-wrap;font:inherit}h1{color:#0b2446}</style></head><body><h1>BharatSHIELD</h1><pre>${text.replace(/[&<>]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char])}</pre></body></html>`;
+    if (format === "csv") {
+      const csv = [
+        "case_id,threat_type,risk,score,status,note,created_at",
+        `"${item.case_id}","${item.type}","${item.ai_result.risk}","${item.ai_result.score}","${item.investigation.status}","${item.investigation.note.replace(/"/g, '""')}","${item.created_at}"`,
+      ].join("\n");
+      downloadBlob(csv, `${item.case_id}.csv`, "text/csv");
+      return;
+    }
+    if (format === "html") {
+      downloadBlob(html, `${item.case_id}.html`, "text/html");
+      return;
+    }
+    const reportWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (reportWindow) {
+      reportWindow.document.write(html);
+      reportWindow.document.close();
+      reportWindow.focus();
+      reportWindow.print();
+    } else {
+      downloadBlob(html, `${item.case_id}.html`, "text/html");
+    }
+  }
+
+  function downloadBlob(text, filename, type) {
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   function downloadComplaint() {
@@ -746,6 +907,67 @@ export default function App() {
               <div className="trust-list">
                 {trustChecks.map((item) => <span key={item}>{item}</span>)}
               </div>
+            </div>
+          </section>
+
+          <section className={activeSection === "Dashboard" || activeSection === "History" ? "case-workbench" : "case-workbench section-hidden"}>
+            <div className="section-head wide-head">
+              <div>
+                <h2>Security Cases</h2>
+                <p>AI verdict stays unchanged. Investigation status and notes are added separately.</p>
+              </div>
+              <div className="case-controls">
+                <select value={caseRole} onChange={(event) => setCaseRole(event.target.value)}>
+                  {caseRoles.map((role) => <option key={role}>{role}</option>)}
+                </select>
+                <select value={caseStatusFilter} onChange={(event) => setCaseStatusFilter(event.target.value)}>
+                  {["All", ...caseStatuses].map((status) => <option key={status}>{status}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="case-counts">
+              <div><span>Total</span><strong>{caseCounts.total || 3}</strong></div>
+              <div><span>Suspected</span><strong>{caseCounts.suspected || 1}</strong></div>
+              <div><span>Verified</span><strong>{caseCounts.verified || 1}</strong></div>
+              <div><span>Review</span><strong>{caseCounts.review || 1}</strong></div>
+            </div>
+            <div className="case-grid">
+              {(visibleCases.length ? visibleCases : [
+                buildSecurityCase({ score: 94, risk: "High", confidence: 96, scam_type: "Phishing", what_we_found: "Brand impersonation detected.", signals: [{ label: "Fake domain", reason: "Banking lookalike URL" }] }, "https://suspicious-login.example", "url", session?.user),
+                buildSecurityCase({ score: 38, risk: "Medium", confidence: 70, scam_type: "QR Review", what_we_found: "Payment payload requires review.", signals: [{ label: "UPI payload", reason: "Unknown merchant" }] }, "upi://pay?pa=unknown@upi", "qr", session?.user),
+                buildSecurityCase({ score: 18, risk: "Low", confidence: 82, scam_type: "URL Safe", what_we_found: "No strong risk signal.", signals: [] }, "https://example.com", "url", session?.user),
+              ]).slice(0, activeSection === "Dashboard" ? 3 : 8).map((item) => (
+                <div className="glass case-card" key={item.case_id}>
+                  <div className="case-top">
+                    <span className={`case-status ${item.investigation.status.toLowerCase().replace(/\s/g, "-")}`}>{item.investigation.status}</span>
+                    <strong>{item.case_id}</strong>
+                  </div>
+                  <h2>{item.type}</h2>
+                  <p>{item.input}</p>
+                  <div className="case-ai">
+                    <div><span>AI Risk</span><strong>{item.ai_result.score}%</strong></div>
+                    <div><span>Threat</span><strong>{item.ai_result.risk}</strong></div>
+                  </div>
+                  <label>
+                    Status
+                    <select value={item.investigation.status} onChange={(event) => updateCase(item.case_id, "status", event.target.value)}>
+                      {caseStatuses.map((status) => <option key={status}>{status}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Investigator Note
+                    <textarea className="case-note" value={item.investigation.note} onChange={(event) => updateCase(item.case_id, "note", event.target.value)} placeholder="Add review note" />
+                  </label>
+                  <div className="case-timeline">
+                    {item.timeline.slice(-3).map((entry) => <span key={`${item.case_id}-${entry.label}-${entry.time}`}>{entry.label}</span>)}
+                  </div>
+                  <div className="toolrow compact-actions">
+                    <button onClick={() => downloadCaseReport(item, "pdf")}>PDF</button>
+                    <button onClick={() => downloadCaseReport(item, "csv")}>CSV</button>
+                    <button onClick={() => downloadCaseReport(item, "html")}>HTML</button>
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
 

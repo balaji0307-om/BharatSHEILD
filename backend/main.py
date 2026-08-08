@@ -519,7 +519,9 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         {"label": "URL / QR risk", "score": max([item["score"] for item in url_checks] + ([qr_analysis["score"]] if qr_analysis else [0])), "why": "Inspects link structure, brand impersonation, UPI payloads, and suspicious destinations."},
     ]
 
-    return {
+    created_at = datetime.now(timezone.utc).isoformat()
+    case_id = f"BS-{secrets.randbelow(9000) + 1000}"
+    result = {
         "score": score,
         "risk": risk,
         "confidence": confidence,
@@ -537,8 +539,23 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         "url_checks": url_checks,
         "qr_analysis": qr_analysis,
         "gemini": gemini,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at,
     }
+    result["case_id"] = case_id
+    result["ai_result"] = {
+        "risk": risk,
+        "score": score,
+        "confidence": confidence,
+        "explanation": result["what_we_found"],
+        "reasons": [f"{item['label']}: {item['reason']}" for item in rules["signals"][:6]],
+    }
+    result["investigation"] = {
+        "status": "Suspected" if score >= 70 else "Needs Review" if score >= 35 else "Verified",
+        "note": "",
+        "reviewed_by": None,
+        "reviewed_at": None,
+    }
+    return result
 
 
 @app.post("/api/url-check")
