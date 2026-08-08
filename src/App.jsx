@@ -207,6 +207,22 @@ function saveStoredUsers(users) {
   localStorage.setItem("bharatshield_users", JSON.stringify(users));
 }
 
+function upsertLocalUser(user, password) {
+  if (!user?.email || !password) return;
+  const users = getStoredUsers();
+  const email = user.email.trim().toLowerCase();
+  const localUser = {
+    id: user.id || Date.now(),
+    name: user.name || "User",
+    email,
+    password,
+  };
+  const nextUsers = users.some((item) => item.email === email)
+    ? users.map((item) => item.email === email ? { ...item, ...localUser } : item)
+    : [...users, localUser];
+  saveStoredUsers(nextUsers);
+}
+
 function createLocalSession(user) {
   return {
     token: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -414,6 +430,7 @@ export default function App() {
   const [notificationsOn, setNotificationsOn] = useState(true);
   const [privacyMode, setPrivacyMode] = useState(true);
   const [error, setError] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
   const recognitionRef = useRef(null);
 
   const scanSteps = ["Checking message", "Finding risk words", "Checking URL", "Checking domain", "Preparing review", "Generating report"];
@@ -714,9 +731,14 @@ export default function App() {
     event.preventDefault();
     setAuthLoading(true);
     setAuthError("");
+    const cleanForm = {
+      name: authForm.name.trim(),
+      email: authForm.email.trim().toLowerCase(),
+      password: authForm.password,
+    };
     const payload = authMode === "signup"
-      ? authForm
-      : { email: authForm.email, password: authForm.password };
+      ? cleanForm
+      : { email: cleanForm.email, password: cleanForm.password };
     try {
       const response = await fetch(`${API_BASE}/api/${authMode === "signup" ? "signup" : "login"}`, {
         method: "POST",
@@ -725,12 +747,13 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Authentication failed.");
+      upsertLocalUser(data.user, cleanForm.password);
       saveSession(data);
       setSession(data);
       setShowAuth(false);
     } catch (err) {
       try {
-        const localSession = localAuth(authMode, authForm);
+        const localSession = localAuth(authMode, cleanForm);
         saveSession(localSession);
         setSession(localSession);
         setShowAuth(false);
@@ -746,6 +769,7 @@ export default function App() {
     localStorage.removeItem("bharatshield_session");
     setSession(null);
     setShowAuth(true);
+    setProfileOpen(false);
   }
 
   const recommendations = result?.recommendations || [
@@ -775,7 +799,6 @@ export default function App() {
           <div className="india-skyline" />
           <div className="tricolor-clouds" />
           <div className="landing-footer">
-            <div className="mini-shield">BS</div>
             <p>India Focused. Safety First.</p>
             <div className="real-loader" aria-label="Loading dashboard">
               <span />
@@ -872,7 +895,20 @@ export default function App() {
             </div>
             <div className="header-icons">
               <button type="button" onClick={() => setActiveSection("Live Scam Alerts")}>Alerts</button>
-              <button type="button" title={session.user?.name || "User"}>{(session.user?.name || "User").slice(0, 1).toUpperCase()}</button>
+              <div className="profile-menu">
+                <button type="button" title={session.user?.name || "User"} onClick={() => setProfileOpen((open) => !open)}>
+                  {(session.user?.name || "User").slice(0, 1).toUpperCase()}
+                </button>
+                {profileOpen && (
+                  <div className="profile-popover">
+                    <strong>{session.user?.name || "User"}</strong>
+                    <span>{session.user?.email || "Local account"}</span>
+                    <button type="button" onClick={() => { setActiveSection("Settings"); setProfileOpen(false); }}>Profile</button>
+                    <button type="button" onClick={() => { setActiveSection("History"); setProfileOpen(false); }}>Scan History</button>
+                    <button type="button" onClick={logout}>Logout</button>
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 

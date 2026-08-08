@@ -56,7 +56,7 @@ button:disabled {
   z-index: 10;
   display: grid;
   place-items: center;
-  padding: 0;
+  padding: clamp(18px, 3vh, 36px);
   background:
     radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.95), rgba(247, 251, 255, 0.92) 34%, rgba(229, 239, 249, 0.9) 100%),
     linear-gradient(180deg, #ffffff, #edf5fb);
@@ -110,16 +110,15 @@ button:disabled {
 
 .landing-center {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: grid;
   justify-items: center;
   gap: clamp(10px, 1.8vh, 18px);
-  transform: translateY(-5vh);
+  transform: translateY(-3vh);
 }
 
 .hero-shield {
-  width: min(34vw, 330px);
-  min-width: 210px;
+  width: clamp(180px, 27vw, 300px);
   filter: drop-shadow(0 24px 34px rgba(18, 54, 104, 0.18));
 }
 
@@ -131,9 +130,10 @@ button:disabled {
 .landing-title {
   margin: 0;
   color: #17366f;
-  font-size: clamp(2.9rem, 7vw, 6.2rem);
+  font-size: clamp(2.4rem, 6.2vw, 5.7rem);
   font-weight: 900;
   letter-spacing: 0;
+  line-height: 1;
 }
 
 .landing-title span {
@@ -154,11 +154,11 @@ button:disabled {
 .india-skyline {
   position: absolute;
   left: 50%;
-  bottom: 17vh;
+  bottom: 13vh;
   width: min(70vw, 880px);
-  height: 19vh;
+  height: 15vh;
   transform: translateX(-50%);
-  opacity: 0.18;
+  opacity: 0.12;
   background: #46627d;
   clip-path: polygon(
     0 100%, 0 82%, 4% 82%, 4% 70%, 6% 70%, 6% 62%, 8% 70%, 9% 70%, 9% 82%,
@@ -185,7 +185,7 @@ button:disabled {
 .landing-footer {
   position: absolute;
   left: 50%;
-  bottom: clamp(24px, 7vh, 76px);
+  bottom: clamp(20px, 5.4vh, 54px);
   z-index: 2;
   display: grid;
   justify-items: center;
@@ -197,17 +197,6 @@ button:disabled {
   margin: 0;
   color: #2f3f52;
   font-weight: 800;
-}
-
-.mini-shield {
-  width: 38px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  color: #17366f;
-  font-weight: 900;
-  border: 3px solid #17366f;
-  clip-path: polygon(50% 0, 88% 14%, 88% 52%, 50% 100%, 12% 52%, 12% 14%);
 }
 
 .real-loader {
@@ -698,9 +687,11 @@ h2 {
   display: flex;
   align-items: center;
   gap: 10px;
+  position: relative;
 }
 
-.header-icons button {
+.header-icons > button,
+.profile-menu > button {
   min-width: 42px;
   min-height: 42px;
   justify-content: center;
@@ -711,17 +702,49 @@ h2 {
   box-shadow: 0 12px 24px rgba(30, 56, 93, 0.08);
 }
 
-.header-icons button:first-child {
+.header-icons > button:first-child {
   padding: 0 14px;
   background: #fff0f2;
   color: #c42f43;
 }
 
-.header-icons button:last-child {
+.profile-menu > button {
   width: 46px;
   padding: 0;
   background: linear-gradient(135deg, #dbe9ff, #91aff0);
   color: #0b2446;
+}
+
+.profile-menu {
+  position: relative;
+}
+
+.profile-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 8;
+  display: grid;
+  gap: 8px;
+  width: 230px;
+  border: 1px solid #d7e3ef;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+  box-shadow: 0 22px 50px rgba(30, 56, 93, 0.18);
+}
+
+.profile-popover span {
+  color: #607588;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.profile-popover button {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 38px;
+  background: #f8fbff;
 }
 
 .quick-actions {
@@ -1194,8 +1217,9 @@ textarea:focus {
 }
 
 .extension-preview {
-  position: relative;
-  min-height: 460px;
+  display: grid;
+  gap: 14px;
+  min-height: 0;
   overflow: hidden;
   background: linear-gradient(135deg, #f8fbff, #eef6ff);
 }
@@ -1212,9 +1236,10 @@ textarea:focus {
 }
 
 .browser-bar span {
-  flex: 0 0 58px;
+  flex: 0 0 13px;
   width: 13px;
   height: 13px;
+  margin-right: 48px;
   border-radius: 50%;
   background: #ee495c;
   box-shadow: 22px 0 #f2b83b, 44px 0 #25c993;
@@ -1222,33 +1247,30 @@ textarea:focus {
 
 .fake-page {
   display: grid;
-  gap: 14px;
+  gap: 11px;
   width: min(420px, 76%);
-  margin: 34px auto 145px;
+  margin: 8px auto 0;
   border: 1px solid #d7e3ef;
   border-radius: 8px;
-  padding: 22px;
+  padding: 17px;
   background: #fff;
 }
 
 .fake-page input {
   border: 1px solid #d7e3ef;
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
   color: #607588;
 }
 
 .guardian-overlay {
-  position: absolute;
-  left: 50%;
-  bottom: 22px;
-  width: min(400px, calc(100% - 44px));
+  width: min(440px, 100%);
+  margin: 0 auto;
   border: 1px solid #ffc4cc;
   border-radius: 8px;
-  padding: 18px;
+  padding: 14px;
   background: #fff7f8;
   box-shadow: 0 24px 48px rgba(196, 47, 67, 0.18);
-  transform: translateX(-50%);
 }
 
 .guardian-overlay span {
@@ -1261,7 +1283,11 @@ textarea:focus {
 }
 
 .guardian-overlay h2 {
-  margin-top: 10px;
+  margin: 8px 0 6px;
+}
+
+.guardian-overlay p {
+  margin: 0 0 10px;
 }
 
 .trust-meter-card {
