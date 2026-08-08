@@ -1250,8 +1250,16 @@ textarea:focus {
 }
 
 .guardian-overlay span {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #ffe6ea;
   color: #c42f43;
   font-weight: 900;
+}
+
+.guardian-overlay h2 {
+  margin-top: 10px;
 }
 
 .trust-meter-card {
@@ -1279,6 +1287,22 @@ textarea:focus {
   font-family: Consolas, monospace;
   font-weight: 900;
   overflow-wrap: anywhere;
+}
+
+.blocked-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.blocked-list span {
+  border: 1px solid #ffd2d8;
+  border-radius: 8px;
+  padding: 11px;
+  background: #fff7f8;
+  color: #c42f43;
+  font-weight: 900;
 }
 
 .roadmap-list,
@@ -1458,12 +1482,19 @@ textarea:focus {
 
 .safety-seal {
   display: inline-flex;
+  align-items: center;
+  gap: 10px;
   width: fit-content;
   border-radius: 999px;
   padding: 8px 12px;
   background: #ecfff8;
   color: #15966c;
   font-weight: 900;
+}
+
+.safety-seal span {
+  border-left: 1px solid currentColor;
+  padding-left: 10px;
 }
 
 .safety-seal.high,

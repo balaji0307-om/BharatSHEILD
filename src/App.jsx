@@ -104,23 +104,14 @@ const liveAlerts = [
   ["Fake job offers", "Medium", "Students", "No real employer asks joining fee on UPI."],
 ];
 
-const guardianSignals = [
-  ["URL Score", "91%", "Lookalike SBI login path"],
-  ["SSL", "Valid", "Certificate present, still not enough"],
-  ["Brand Match", "94%", "Visual and domain resemble SBI"],
-  ["Redirect", "Hidden", "Login page forwards to external form"],
-  ["Intent", "OTP Theft", "Page requests mobile OTP"],
-];
-
 const guardianTimeline = ["Opened URL", "Redirect detected", "Fake login form found", "OTP field detected", "High risk warning shown"];
-const platformRoadmap = [
-  ["Browser Extension", "Real-time website overlay, right-click scan, copy detection"],
-  ["Android Share", "WhatsApp, SMS, Email, Telegram share-to-scan flow"],
-  ["QR Camera", "Live QR sandbox before opening destination"],
-  ["Community Reputation", "Reported count, last seen, duplicate scam DNA"],
+const protectionChannels = [
+  ["Browser Guard", "Warns before a risky login page or copied link is opened."],
+  ["Share to Scan", "Checks WhatsApp, SMS, email, and social messages shared by the user."],
+  ["QR Preview", "Shows destination, amount, UPI ID, and risk before opening the QR link."],
+  ["Report Support", "Keeps evidence ready for complaint download and official reporting."],
 ];
 
-const trustChecks = ["HTTPS Secured", "Data Encrypted", "API Protected", "Privacy Protected", "Explainable Results"];
 const deniedPermissions = ["Contacts", "Photos", "Location", "OTP", "Passwords", "Background microphone"];
 const autoDeleteOptions = ["30 Minutes", "1 Hour", "24 Hours", "Never"];
 const allowedEvidence = [".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp3", ".wav", ".m4a"];
@@ -880,8 +871,8 @@ export default function App() {
               <p>{activeSection === "Dashboard" ? "Stay alert, stay safe from digital scams." : "Manage your digital safety here."}</p>
             </div>
             <div className="header-icons">
-              <button type="button">3 alerts</button>
-              <button type="button">{(session.user?.name || "User").slice(0, 1).toUpperCase()}</button>
+              <button type="button" onClick={() => setActiveSection("Live Scam Alerts")}>Alerts</button>
+              <button type="button" title={session.user?.name || "User"}>{(session.user?.name || "User").slice(0, 1).toUpperCase()}</button>
             </div>
           </header>
 
@@ -896,18 +887,6 @@ export default function App() {
             {recentActivity.map((item, index) => (
               <div key={item} className={index % 2 ? "activity-warn" : "activity-safe"}>{item}</div>
             ))}
-          </section>
-
-          <section className={activeSection === "Dashboard" ? "trust-strip" : "trust-strip section-hidden"}>
-            <div className="glass trust-card">
-              <div>
-                <h2>Trust Center</h2>
-                <p>Privacy-first scanning with explainable results and controlled permissions.</p>
-              </div>
-              <div className="trust-list">
-                {trustChecks.map((item) => <span key={item}>{item}</span>)}
-              </div>
-            </div>
           </section>
 
           <section className={activeSection === "Dashboard" || activeSection === "History" ? "case-workbench" : "case-workbench section-hidden"}>
@@ -1132,8 +1111,11 @@ export default function App() {
               <section className="glass ai-card">
                 <h2>BharatSHIELD Review</h2>
                 <p className="typing">{result ? result.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
-                <div className={`safety-seal ${riskColor(score)}`}>{score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"} | Verified by BharatSHIELD</div>
                 <ol>{(result?.signals?.length ? result.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
+                <div className={`safety-seal ${riskColor(score)}`}>
+                  <strong>{score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
+                  <span>Verified by BharatSHIELD</span>
+                </div>
               </section>
             </aside>
           </section>
@@ -1281,38 +1263,49 @@ export default function App() {
                     <div className="guardian-overlay">
                       <span>HIGH RISK</span>
                       <h2>This site imitates SBI</h2>
-                      <p>Brand lookalike, hidden redirect, and OTP request detected.</p>
+                      <p>Do not enter mobile number, OTP, password, or UPI PIN on this page.</p>
                       <div className="toolrow compact-actions"><button className="danger-action">Leave Site</button><button>View Details</button></div>
                     </div>
                   </div>
                   <div className="glass trust-meter-card">
-                    <h2>Website Trust Meter</h2>
+                    <h2>Site Safety</h2>
                     <div className="trust-score">8/100</div>
-                    <p>Low trust because login, OTP, and brand impersonation signals were found.</p>
-                    <div className="intel-list">{guardianSignals.map(([name, value, detail]) => <div key={name}><span>{name}</span><strong>{value}</strong><small>{detail}</small></div>)}</div>
+                    <p>This page looks unsafe because it asks for OTP on a lookalike banking website.</p>
+                    <div className="intel-list">
+                      <div><span>Final action</span><strong>Leave site</strong></div>
+                      <div><span>Do not share</span><strong>OTP or PIN</strong></div>
+                      <div><span>Next step</span><strong>Use official app</strong></div>
+                    </div>
                   </div>
                   <div className="glass">
-                    <h2>Scam Match</h2>
-                    <div className="dna-box">BS-DNA-91F2-A8C7</div>
-                    <p>This scam pattern matches a fake banking login and OTP theft attempt.</p>
-                    <div className="trust-list"><span>Fake Bank Login</span><span>OTP Theft</span><span>Duplicate Scam</span></div>
+                    <h2>Why Blocked</h2>
+                    <div className="blocked-list">
+                      <span>Fake banking login</span>
+                      <span>OTP request</span>
+                      <span>Hidden redirect</span>
+                      <span>Brand lookalike</span>
+                    </div>
+                    <p className="secure-note">Verified by BharatSHIELD</p>
                   </div>
                 </div>
                 <div className="ecosystem-grid">
                   <div className="glass">
-                    <h2>Scam Timeline</h2>
+                    <h2>What Happened</h2>
                     <div className="timeline-list compact-timeline">
                       {guardianTimeline.map((item, index) => <div key={item}><span>Step {index + 1}</span><strong>{item}</strong><em>{index >= 3 ? "High" : "Review"}</em></div>)}
                     </div>
                   </div>
                   <div className="glass">
                     <h2>QR Sandbox Preview</h2>
-                    <p>QR opens in a safe preview first. Destination, redirect, payment intent, UPI ID, and risk are shown before the user proceeds.</p>
-                    <div className="secure-note">File automatically deleted after analysis.</div>
+                    <p>QR links open in preview first. User sees destination, UPI ID, amount, and risk before continuing.</p>
+                    <div className="toolrow compact-actions">
+                      <button onClick={() => { setMode("qr"); setActiveSection("Scan"); }}>Check QR</button>
+                      <button onClick={() => setActiveSection("Report Scam")}>Report</button>
+                    </div>
                   </div>
                   <div className="glass">
-                    <h2>Available Protections</h2>
-                    <div className="roadmap-list">{platformRoadmap.map(([title, detail]) => <div key={title}><strong>{title}</strong><p>{detail}</p></div>)}</div>
+                    <h2>Protection Channels</h2>
+                    <div className="roadmap-list">{protectionChannels.map(([title, detail]) => <div key={title}><strong>{title}</strong><p>{detail}</p></div>)}</div>
                   </div>
                 </div>
               </>
@@ -1469,8 +1462,9 @@ export default function App() {
                     <p className="secure-note">Files are reviewed locally in the browser flow and marked for deletion after {autoDelete}.</p>
                   </div>
                   <div className="glass">
-                    <h2>Protection Status</h2>
-                    <div className="trust-list">{trustChecks.map((item) => <span key={item}>{item}</span>)}</div>
+                    <h2>Account Safety</h2>
+                    <p>Use a strong password, keep alerts on, and report high-risk scans immediately.</p>
+                    <div className="toolrow compact-actions"><button onClick={() => setActiveSection("Emergency")}>Emergency Help</button><button onClick={() => setActiveSection("Report Scam")}>Report Scam</button></div>
                   </div>
                 </div>
               </>
