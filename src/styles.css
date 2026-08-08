@@ -590,18 +590,62 @@ h2 {
 }
 
 .case-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: stretch;
 }
 
 .case-card {
   display: grid;
   gap: 12px;
+  min-width: 0;
+  align-content: start;
+  overflow: hidden;
 }
 
 .case-top,
 .case-ai {
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+}
+
+.case-top strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.case-card h2 {
+  margin-bottom: 0;
+}
+
+.case-input {
+  display: -webkit-box;
+  max-height: 4.6em;
+  margin: 0;
+  overflow: hidden;
+  color: #142233;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.case-ai {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.case-ai div {
+  min-width: 0;
+  border: 1px solid #edf1f5;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fbff;
+}
+
+.case-ai strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
 }
 
 .case-status {
@@ -627,8 +671,15 @@ h2 {
 .case-card label {
   display: grid;
   gap: 7px;
+  min-width: 0;
   color: #607588;
   font-weight: 900;
+}
+
+.case-card select,
+.case-note {
+  width: 100%;
+  min-width: 0;
 }
 
 .case-note {
@@ -646,6 +697,7 @@ h2 {
   color: #33495f;
   font-size: 0.9rem;
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .activity-strip div {

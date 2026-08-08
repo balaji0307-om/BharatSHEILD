@@ -1183,7 +1183,7 @@ export default function App() {
                     <strong>{item.case_id}</strong>
                   </div>
                   <h2>{item.type}</h2>
-                  <p>{item.input}</p>
+                  <p className="case-input" title={item.input}>{item.input}</p>
                   <div className="case-ai">
                     <div><span>AI Risk</span><strong>{item.ai_result.score}%</strong></div>
                     <div><span>Threat</span><strong>{item.ai_result.risk}</strong></div>
