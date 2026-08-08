@@ -316,6 +316,91 @@ function highlightedText(text) {
   return { __html: html };
 }
 
+function parseQrPayload(text) {
+  try {
+    const url = new URL(text.trim());
+    const params = url.searchParams;
+    const upiId = params.get("pa") || "";
+    const merchant = params.get("pn") || "";
+    const amount = params.get("am") || "";
+    const note = params.get("tn") || "";
+    const normalized = [url.protocol.replace(":", ""), upiId, merchant, amount, note, url.host, url.pathname]
+      .join("|")
+      .toLowerCase();
+    let hash = 0;
+    for (let index = 0; index < normalized.length; index += 1) {
+      hash = ((hash << 5) - hash + normalized.charCodeAt(index)) >>> 0;
+    }
+    return {
+      upi_id: upiId || "Not found",
+      merchant: merchant || "Not found",
+      amount: amount || "Not found",
+      note: note || "Not found",
+      hidden_redirect: url.protocol === "http:" || url.protocol === "https:",
+      fingerprint: `BS-QR-${hash.toString(16).toUpperCase().padStart(8, "0").slice(0, 8)}`,
+      recipient_reputation: upiId ? "Unknown" : "Not applicable",
+      previous_reports: 0,
+    };
+  } catch {
+    return {
+      upi_id: text.toLowerCase().includes("upi") ? "Detected in payload" : "Not found",
+      merchant: "Not found",
+      amount: "Not found",
+      note: "Not found",
+      hidden_redirect: /^https?:\/\//i.test(text),
+      fingerprint: "BS-QR-UNVERIFIED",
+      recipient_reputation: "Unknown",
+      previous_reports: 0,
+    };
+  }
+}
+
+function detectHiddenImagePayload(bytes, fileName) {
+  const view = new Uint8Array(bytes);
+  const text = Array.from(view.slice(0, Math.min(view.length, 16000)))
+    .map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : " "))
+    .join("")
+    .toLowerCase();
+  const ext = fileName.toLowerCase().split(".").pop() || "";
+  const signatures = [
+    ["<script", "script tag"],
+    ["javascript:", "javascript payload"],
+    ["powershell", "PowerShell command"],
+    ["cmd.exe", "command shell marker"],
+    ["<?php", "PHP code"],
+    ["eval(", "eval code"],
+    ["mzm", "executable marker"],
+  ];
+  const marker = signatures.find(([pattern]) => text.includes(pattern));
+  if (marker) return `Hidden ${marker[1]} found inside image bytes.`;
+
+  if (view[0] === 0x50 && view[1] === 0x4b) return "ZIP/APK-style file signature found. This is not a safe QR image.";
+  if (view[0] === 0x4d && view[1] === 0x5a) return "Executable file signature found. This is not a safe QR image.";
+
+  if (ext === "png") {
+    const tail = "iend";
+    const ascii = Array.from(view).map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : " ")).join("").toLowerCase();
+    const endIndex = ascii.lastIndexOf(tail);
+    if (endIndex >= 0 && view.length - endIndex > 32) {
+      const afterEnd = ascii.slice(endIndex + tail.length).trim();
+      if (afterEnd.length > 12) return "Extra hidden data found after PNG end marker.";
+    }
+  }
+
+  if ((ext === "jpg" || ext === "jpeg") && view.length > 4) {
+    let end = -1;
+    for (let index = view.length - 2; index >= 0; index -= 1) {
+      if (view[index] === 0xff && view[index + 1] === 0xd9) {
+        end = index + 2;
+        break;
+      }
+    }
+    if (end > 0 && view.length - end > 24) return "Extra hidden data found after JPEG end marker.";
+  }
+
+  return "";
+}
+
 function clientAnalysis(text, channel) {
   const lowered = text.toLowerCase();
   const checks = [
@@ -332,7 +417,16 @@ function clientAnalysis(text, channel) {
     ["http", 18, "External link"],
   ];
   const hits = checks.filter(([term]) => lowered.includes(term));
-  const score = Math.min(96, 12 + hits.reduce((sum, [, weight]) => sum + weight, 0) + (channel === "qr" || channel === "url" ? 8 : 0));
+  const qrPayload = channel === "qr" ? parseQrPayload(text) : null;
+  const qrTerms = qrPayload ? [qrPayload.upi_id, qrPayload.merchant, qrPayload.amount, qrPayload.note].join(" ").toLowerCase() : "";
+  const qrRiskBoost = qrPayload
+    ? 22
+      + (/refund|support|kyc|verify|fee|urgent|blocked|otp|pin/.test(qrTerms) ? 24 : 0)
+      + (Number.parseFloat(qrPayload.amount) >= 1000 ? 10 : Number.parseFloat(qrPayload.amount) > 0 ? 3 : 0)
+      + (qrPayload.hidden_redirect ? 18 : 0)
+      + (qrPayload.upi_id !== "Not found" ? Array.from(qrPayload.upi_id).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 9 : 0)
+    : 0;
+  const score = Math.min(96, 12 + hits.reduce((sum, [, weight]) => sum + weight, 0) + (channel === "url" ? 8 : 0) + qrRiskBoost);
   const scamType = lowered.includes("job") || lowered.includes("hiring") ? "Fake Job" : lowered.includes("investment") || lowered.includes("double your money") ? "Investment Scam" : lowered.includes("http") || channel === "url" ? "Phishing" : "Suspicious Message";
   const signals = hits.map(([term, , label]) => ({ label, reason: `${term} found in the content` }));
   return {
@@ -356,10 +450,14 @@ function clientAnalysis(text, channel) {
       { label: "URL / QR risk", score: lowered.includes("http") || channel === "qr" || channel === "url" ? 84 : 8, why: "Links and QR payloads are reviewed." },
     ],
     url_checks: lowered.includes("http") || channel === "url" ? [{ domain: text.replace(/^https?:\/\//, "").split(/[/?#]/)[0] || "Link", score: Math.min(95, score + 5), checks: [{ label: "Status", result: "Review carefully" }] }] : [],
-    qr_analysis: { upi_id: lowered.includes("upi") ? "Detected in payload" : "Not found", merchant: "Not found", amount: "Not found" },
+    qr_analysis: qrPayload || { upi_id: "Not found", merchant: "Not found", amount: "Not found", note: "Not found" },
     call_analysis: { emotion: lowered.includes("blocked") ? "Pressure detected" : "Not analyzed", pressure_score: lowered.includes("urgent") || lowered.includes("blocked") ? 82 : 18, live_warning: score >= 70 },
-    what_we_found: hits.length ? `Found ${hits.length} risk signals in this content.` : "No major scam signal found in this content.",
-    why_dangerous: score >= 55 ? "This content may push the user toward a risky action such as clicking a link or sharing private details." : "The content does not show strong scam indicators, but verify before acting.",
+    what_we_found: qrPayload
+      ? `QR review for recipient ${qrPayload.upi_id}, merchant ${qrPayload.merchant}, amount ${qrPayload.amount}, note ${qrPayload.note}.`
+      : hits.length ? `Found ${hits.length} risk signals in this content.` : "No major scam signal found in this content.",
+    why_dangerous: qrPayload
+      ? "Backend verification was unavailable. Treat this QR as unverified and confirm recipient, amount, and purpose before payment."
+      : score >= 55 ? "This content may push the user toward a risky action such as clicking a link or sharing private details." : "The content does not show strong scam indicators, but verify before acting.",
     how_sure: `${Math.min(98, score + 4)}% confidence based on visible content checks.`,
   };
 }
@@ -578,6 +676,55 @@ export default function App() {
     if (!file) return;
     setError("");
     try {
+      if (!/^image\/(png|jpe?g|webp|bmp|gif)$/i.test(file.type)) {
+        setError("Blocked: upload a real image file only for QR scanning.");
+        return;
+      }
+      const bytes = await file.arrayBuffer();
+      const hiddenPayload = detectHiddenImagePayload(bytes, file.name);
+      if (hiddenPayload) {
+        setMode("qr");
+        setContent("");
+        setResult({
+          score: 88,
+          risk: "Critical",
+          confidence: 94,
+          rule_score: 90,
+          url_score: 0,
+          safety_score: 12,
+          scam_type: "Unsafe QR Image",
+          signals: [{ label: "Image payload", reason: hiddenPayload }],
+          recommendations: [
+            "Do not scan or share this image.",
+            "Ask the sender for a clean QR image from an official source.",
+            "Report the sender if this image came with payment pressure.",
+          ],
+          reason_breakdown: [
+            { label: "Image safety", score: 92, why: hiddenPayload },
+            { label: "QR verification", score: 88, why: "QR scan was blocked before decoding." },
+            { label: "Credential risk", score: 20, why: "No credential text was decoded." },
+            { label: "URL / QR risk", score: 88, why: "Image container has suspicious hidden payload markers." },
+          ],
+          url_checks: [],
+          qr_analysis: {
+            upi_id: "Blocked",
+            merchant: "Blocked",
+            amount: "Blocked",
+            note: hiddenPayload,
+            recipient_reputation: "Unsafe image",
+            previous_reports: 0,
+            fingerprint: "BS-QR-BLOCKED",
+            hidden_redirect: false,
+            checks: [{ label: "Image safety", result: hiddenPayload }],
+          },
+          call_analysis: { emotion: "Not analyzed", pressure_score: 0, live_warning: false },
+          what_we_found: "This QR image was blocked before scanning because hidden payload markers were detected.",
+          why_dangerous: "Attackers can hide script, executable, or extra data inside image files. BharatSHIELD refused to process this image.",
+          how_sure: "94% confidence based on image container safety checks.",
+        });
+        setError(`Blocked unsafe QR image: ${hiddenPayload}`);
+        return;
+      }
       const bitmap = await createImageBitmap(file);
       let decoded = "";
 
@@ -1271,6 +1418,10 @@ export default function App() {
                 <div><span>UPI ID</span><strong>{result?.qr_analysis?.upi_id || "Not found"}</strong></div>
                 <div><span>Merchant</span><strong>{result?.qr_analysis?.merchant || "Not found"}</strong></div>
                 <div><span>Amount</span><strong>{result?.qr_analysis?.amount || "Not found"}</strong></div>
+                <div><span>Payment note</span><strong>{result?.qr_analysis?.note || "Not found"}</strong></div>
+                <div><span>Recipient reputation</span><strong>{result?.qr_analysis?.recipient_reputation || "Unknown"}</strong></div>
+                <div><span>Previous reports</span><strong>{result?.qr_analysis?.previous_reports ?? 0}</strong></div>
+                <div><span>QR fingerprint</span><strong>{result?.qr_analysis?.fingerprint || "Not generated"}</strong></div>
                 <div><span>Voice emotion</span><strong>{result?.call_analysis?.emotion || "Not analyzed"}</strong></div>
                 <div><span>Pressure score</span><strong>{result?.call_analysis?.pressure_score ?? 0}%</strong></div>
                 <div><span>Live warning</span><strong>{result?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>

@@ -25,6 +25,7 @@ BharatSHIELD focuses on three outcomes:
 - Scans SMS, WhatsApp messages, emails, fake job posts, investment offers, and fake news forwards.
 - Checks suspicious URLs for phishing signals, brand impersonation, risky keywords, and unsafe patterns.
 - Decodes QR images and reviews QR payloads before opening payment or website links.
+- Blocks QR images that contain suspicious hidden payload markers such as script, command, executable, or extra container data.
 - Reviews call transcripts for OTP requests, threat language, urgency, and social engineering.
 - Generates a risk score, confidence score, evidence highlights, and recommended actions.
 - Creates backend-backed security cases with status tracking, notes, timelines, and export options.
@@ -68,6 +69,7 @@ The QR scanner is designed for safe preview first:
 - Upload QR image
 - Decode payload
 - Identify UPI ID, merchant name, amount, and suspicious notes
+- Generate a QR fingerprint and recipient reputation status
 - Detect risky payment or redirect patterns
 - Show recommendation before the user opens anything
 

@@ -210,6 +210,10 @@ SUSPICIOUS_KEYWORDS = {
     "paytm": 6,
     "amazon hiring": 14,
     "income daily": 14,
+    "javascript:": 26,
+    "<script": 26,
+    "powershell": 24,
+    "cmd.exe": 24,
 }
 
 KEYWORD_EXPLANATIONS = {
@@ -229,6 +233,10 @@ KEYWORD_EXPLANATIONS = {
     "click here": "Generic click prompts often hide phishing destinations.",
     "account suspended": "Suspension threats are a classic phishing pressure tactic.",
     "upi": "UPI links or collect requests can trigger unwanted payment flows.",
+    "javascript:": "QR codes or links should not contain executable browser script.",
+    "<script": "Embedded script content is unsafe in QR or message payloads.",
+    "powershell": "Command text inside user-facing content is a strong abuse signal.",
+    "cmd.exe": "Command shell markers indicate unsafe executable intent.",
 }
 
 HINDI_KEYWORDS = {
@@ -289,40 +297,128 @@ def similarity_hint(domain: str) -> dict[str, Any] | None:
 
 
 def inspect_qr_payload(text: str) -> dict[str, Any]:
-    parsed = urlparse(text.strip())
+    raw = text.strip()
+    parsed = urlparse(raw)
     qs = parse_qs(parsed.query)
     amount = qs.get("am", [""])[0]
     upi_id = qs.get("pa", [""])[0]
     merchant = qs.get("pn", [""])[0]
     notes = qs.get("tn", [""])[0]
+    lowered_payload = " ".join([raw, upi_id, merchant, notes]).lower()
     checks = []
-    score = 10
+    risk_signals: list[str] = []
+    score = 8
 
     if parsed.scheme == "upi":
-        checks.append({"label": "UPI payload", "result": "Payment intent detected"})
+        checks.append({"label": "Payload", "result": "Valid UPI payment intent"})
+        score += 8
+    elif parsed.scheme in {"http", "https"}:
+        checks.append({"label": "Payload", "result": "Website link inside QR"})
         score += 18
+        risk_signals.append("QR opens a website link")
+    elif raw:
+        checks.append({"label": "Payload", "result": "Non-UPI QR content"})
+        score += 6
+
     if upi_id:
-        checks.append({"label": "UPI ID", "result": upi_id})
-        if any(word in upi_id.lower() for word in ("fake", "refund", "support", "verify")):
-            score += 20
+        upi_valid = bool(re.match(r"^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z][a-zA-Z0-9.\-_]{2,}$", upi_id))
+        checks.append({"label": "Recipient", "result": upi_id})
+        checks.append({"label": "UPI format", "result": "Valid structure" if upi_valid else "Invalid or unusual"})
+        score += 2 if upi_valid else 18
+        if not upi_valid:
+            risk_signals.append("Recipient UPI format is unusual")
+        if any(word in upi_id.lower() for word in ("fake", "refund", "support", "verify", "kyc", "helpdesk", "customer")):
+            score += 24
+            risk_signals.append("Recipient name contains support/refund/KYC terms")
+        if re.search(r"\d{6,}", upi_id):
+            score += 8
+            risk_signals.append("Recipient contains a long numeric pattern")
+    elif parsed.scheme == "upi":
+        score += 22
+        risk_signals.append("UPI QR has no recipient field")
+
     if amount:
         checks.append({"label": "Amount", "result": f"INR {amount}"})
-        score += 12
+        try:
+            amount_value = float(amount)
+        except ValueError:
+            amount_value = 0
+            score += 8
+            risk_signals.append("Amount is not a clean number")
+        if amount_value >= 5000:
+            score += 16
+            risk_signals.append("High payment amount")
+        elif amount_value >= 1000:
+            score += 10
+            risk_signals.append("Moderate payment amount")
+        elif amount_value > 0:
+            score += 3
+    else:
+        checks.append({"label": "Amount", "result": "Not prefilled"})
+
     if merchant:
         checks.append({"label": "Merchant name", "result": merchant})
+        if any(word in merchant.lower() for word in ("refund", "support", "kyc", "verification", "bank", "helpdesk")):
+            score += 20
+            risk_signals.append("Merchant name uses refund/support/KYC terms")
+    else:
+        checks.append({"label": "Merchant name", "result": "Not provided"})
+
     if notes:
         checks.append({"label": "Payment note", "result": notes})
-        if any(word in notes.lower() for word in ("kyc", "refund", "verify")):
-            score += 14
+        if any(word in notes.lower() for word in ("kyc", "refund", "verify", "blocked", "fee", "urgent", "registration")):
+            score += 22
+            risk_signals.append("Payment note contains pressure or verification terms")
+    else:
+        checks.append({"label": "Payment note", "result": "Not provided"})
+
+    if any(word in lowered_payload for word in ("otp", "pin", "password")):
+        score += 26
+        risk_signals.append("QR payload references OTP/PIN/password")
+
+    normalized = "|".join([
+        parsed.scheme.lower(),
+        upi_id.strip().lower(),
+        merchant.strip().lower(),
+        amount.strip(),
+        notes.strip().lower(),
+        parsed.netloc.lower(),
+        parsed.path.lower(),
+    ])
+    fingerprint = "BS-QR-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8].upper()
+    reported_patterns = {
+        "fake-support@upi": 7,
+        "support-refund@upi": 14,
+        "refunddesk@upi": 9,
+    }
+    previous_reports = reported_patterns.get(upi_id.lower(), 0)
+    if previous_reports:
+        score += 24
+        risk_signals.append(f"Recipient has {previous_reports} previous demo reports")
+    elif upi_id:
+        recipient_bucket = int(hashlib.sha256(upi_id.lower().encode("utf-8")).hexdigest()[:2], 16) % 9
+        score += recipient_bucket
+        checks.append({"label": "Recipient risk bucket", "result": f"{recipient_bucket}/8 unknown-recipient variance"})
 
     if not checks:
         checks.append({"label": "QR content", "result": "No UPI/payment fields detected"})
+
+    reputation = "Suspicious" if previous_reports or score >= 70 else "Unknown" if upi_id else "Not applicable"
+    if reputation == "Unknown":
+        checks.append({"label": "Recipient reputation", "result": "Unknown, not verified safe"})
+    elif reputation == "Suspicious":
+        checks.append({"label": "Recipient reputation", "result": "Suspicious pattern"})
 
     return {
         "score": clamp(score),
         "upi_id": upi_id or "Not found",
         "merchant": merchant or "Not found",
         "amount": amount or "Not found",
+        "note": notes or "Not found",
+        "recipient_reputation": reputation,
+        "previous_reports": previous_reports,
+        "fingerprint": fingerprint,
+        "risk_signals": risk_signals,
         "hidden_redirect": parsed.scheme in {"http", "https"} and bool(parsed.netloc),
         "checks": checks,
     }
@@ -739,6 +835,10 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         rules["score"] = clamp(max(rules["score"], max(item["score"] for item in url_checks)))
     if qr_analysis:
         rules["score"] = clamp(max(rules["score"], qr_analysis["score"]))
+        for signal in qr_analysis.get("risk_signals", [])[:6]:
+            rules["signals"].append({"label": "QR payment", "reason": signal})
+        if qr_analysis.get("upi_id") != "Not found":
+            rules["scam_type"] = "UPI QR Review" if qr_analysis["score"] < 55 else "UPI QR Fraud Risk"
 
     gemini = await gemini_analysis(request.content, rules, request.language)
     score = rules["score"]
@@ -750,10 +850,21 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
     elif score >= 30:
         risk = "Medium"
 
-    explanation = (
-        "The review found risky language, pressure tactics, credential requests, "
-        "or suspicious link patterns."
-    )
+    explanation = "The review found risky language, pressure tactics, credential requests, or suspicious link patterns."
+    what_we_found = f"{rules['scam_type']} pattern with {len(rules['signals'])} evidence signals."
+    why_dangerous = "This can push the user into clicking a fake link, sharing private credentials, or authorizing a payment."
+    if qr_analysis:
+        qr_bits = [
+            f"recipient {qr_analysis.get('upi_id')}",
+            f"merchant {qr_analysis.get('merchant')}",
+            f"amount {qr_analysis.get('amount')}",
+            f"note {qr_analysis.get('note')}",
+        ]
+        what_we_found = "QR payment review for " + ", ".join(qr_bits) + "."
+        if qr_analysis.get("risk_signals"):
+            why_dangerous = "Risk signals: " + "; ".join(qr_analysis["risk_signals"][:4]) + "."
+        else:
+            why_dangerous = "Recipient reputation is unknown. Verify the payee inside your UPI app before paying."
 
     confidence = clamp(max(55, min(98, score + 12)))
     safety_score = 100 - score
@@ -773,8 +884,8 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         "safety_score": safety_score,
         "scam_type": rules["scam_type"],
         "explanation": explanation,
-        "what_we_found": f"{rules['scam_type']} pattern with {len(rules['signals'])} evidence signals.",
-        "why_dangerous": "This can push the user into clicking a fake link, sharing private credentials, or authorizing a payment.",
+        "what_we_found": what_we_found,
+        "why_dangerous": why_dangerous,
         "how_sure": f"{confidence}% confidence based on message, link, and behavior checks.",
         "reason_breakdown": reason_breakdown,
         "breakdown": rules["breakdown"],
