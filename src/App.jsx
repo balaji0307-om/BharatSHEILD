@@ -404,6 +404,12 @@ function makeGuardianOtp(mobile) {
   return String((seed + 100000) % 1000000).padStart(6, "0");
 }
 
+function maskMobile(mobile) {
+  const digits = mobile.replace(/\D/g, "").slice(-10);
+  if (digits.length < 4) return "";
+  return `+91 ******${digits.slice(-4)}`;
+}
+
 function detectHiddenImagePayload(bytes, fileName) {
   const view = new Uint8Array(bytes);
   const text = Array.from(view.slice(0, Math.min(view.length, 16000)))
@@ -617,7 +623,7 @@ export default function App() {
   const [privacyMode, setPrivacyMode] = useState(true);
   const [error, setError] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
-  const [guardianForm, setGuardianForm] = useState({ mobile: "", otp: "" });
+  const [guardianForm, setGuardianForm] = useState({ mobile: "", otp: "", sentOtp: "", otpSent: false });
   const recognitionRef = useRef(null);
 
   const scanSteps = ["Checking message", "Finding risk words", "Checking URL", "Checking domain", "Preparing review", "Generating report"];
@@ -628,6 +634,7 @@ export default function App() {
   const safetyScore = result?.safety_score ?? 76;
   const incidentId = useMemo(() => `BS-${Math.floor(20000 + Math.random() * 70000)}`, [result?.created_at]);
   const guardianOtp = makeGuardianOtp(guardianForm.mobile);
+  const guardianMaskedMobile = maskMobile(guardianForm.mobile);
 
   useEffect(() => {
     if (!loading) return;
@@ -1591,7 +1598,13 @@ export default function App() {
                         value={guardianForm.mobile}
                         onChange={(event) => {
                           const mobile = event.target.value.replace(/\D/g, "").slice(0, 10);
-                          setGuardianForm((form) => ({ ...form, mobile, otp: mobile === form.mobile ? form.otp : "" }));
+                          setGuardianForm((form) => ({
+                            ...form,
+                            mobile,
+                            otp: mobile === form.mobile ? form.otp : "",
+                            sentOtp: "",
+                            otpSent: false,
+                          }));
                         }}
                         placeholder="Enter mobile number"
                         inputMode="numeric"
@@ -1612,19 +1625,19 @@ export default function App() {
                         <button
                           type="button"
                           disabled={!guardianOtp}
-                          onClick={() => setGuardianForm((form) => ({ ...form, otp: guardianOtp }))}
+                          onClick={() => setGuardianForm((form) => ({ ...form, sentOtp: guardianOtp, otpSent: true }))}
                         >
-                          Generate
+                          Send OTP
                         </button>
                       </div>
-                      <small>{guardianOtp ? `Generated OTP: ${guardianOtp}` : "Enter a 10 digit number to generate OTP"}</small>
+                      <small>{guardianForm.otpSent ? `BharatSHIELD OTP sent to ${guardianMaskedMobile}` : "Enter a 10 digit number to receive OTP"}</small>
                     </div>
                     <div className="guardian-overlay">
                       <span>HIGH RISK</span>
                       <h2>This site imitates SBI</h2>
                       <p>{guardianForm.mobile || guardianForm.otp ? "Sensitive entry detected. Stop and use the official SBI app only." : "Do not enter mobile number, OTP, password, or UPI PIN on this page."}</p>
                       <div className="toolrow compact-actions">
-                        <button className="danger-action" onClick={() => setGuardianForm({ mobile: "", otp: "" })}>Leave Site</button>
+                        <button className="danger-action" onClick={() => setGuardianForm({ mobile: "", otp: "", sentOtp: "", otpSent: false })}>Leave Site</button>
                         <button onClick={() => setActiveSection("Scan")}>View Details</button>
                       </div>
                     </div>
