@@ -1,136 +1,239 @@
-<div align="center">
+# BharatSHIELD
 
-<img src="assets/banner.png" width="100%" alt="BharatSHIELD Banner"/>
+**AI-powered digital scam detection and response platform for India.**
 
-# 🛡️ BharatSHIELD
+BharatSHIELD helps users inspect suspicious messages, links, QR codes, emails, job offers, investment pitches, fake news forwards, and call transcripts before they act on them. The platform combines an explainable AI layer with rule-based checks, URL inspection, QR parsing, evidence handling, safety recommendations, and a complaint-ready reporting flow.
 
-### 🇮🇳 AI-Powered Digital Scam Detection & Prevention Platform
-
-**Protecting India's Digital Future**
-
-Detecting **Phishing • Fake QR Codes • Scam SMS • WhatsApp Fraud • Email Scams • Fake News • Social Engineering** using Artificial Intelligence.
-
-<p>
-<img src="https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=white"/>
-<img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white"/>
-<img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
-<img src="https://img.shields.io/badge/Google%20Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white"/>
-<img src="https://img.shields.io/badge/TailwindCSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white"/>
-<img src="https://img.shields.io/badge/FastAPI-Powered-success?style=for-the-badge"/>
-<img src="https://img.shields.io/badge/Render-Deployed-46E3B7?style=for-the-badge"/>
-</p>
-
-</div>
+[Live Demo](https://bharatshield.onrender.com) | [Cyber Crime Portal](https://cybercrime.gov.in)
 
 ---
 
-# 🚀 Problem Statement
+## Problem
 
-Digital scams are evolving faster than ever. Every day, millions of users become victims of phishing websites, fake QR codes, scam SMS, WhatsApp fraud, fraudulent emails, fake news, and social engineering attacks.
+Digital scams are increasingly delivered through everyday channels such as SMS, WhatsApp, QR codes, fake websites, social media messages, and phone calls. Many users do not need malware protection only; they need decision-time guidance that explains whether a message, link, or payment request is risky and what to do next.
 
-Traditional antivirus software primarily protects devices from malware but often cannot detect scams designed to manipulate human decisions.
+BharatSHIELD focuses on three outcomes:
 
----
-
-# 💡 Solution
-
-**BharatSHIELD** is an AI-powered cybersecurity platform that proactively identifies digital scams before users become victims.
-
-Using AI, it analyzes suspicious URLs, QR codes, SMS, WhatsApp messages, emails, fake news, and call transcripts, then provides:
-
-- 🎯 Scam Probability Score
-- 📊 Confidence Score
-- ⚠️ Risk Level
-- 🧠 AI Explanation
-- ✅ Recommended Action
-
-This enables users to make safer and more informed digital decisions.
+- Detect suspicious content before the user clicks, pays, or shares credentials.
+- Explain the reason behind every risk score in simple language.
+- Help the user respond with reporting, emergency steps, and evidence organization.
 
 ---
 
-# ✨ Key Features
+## What BharatSHIELD Does
 
-- 🌐 AI URL & Phishing Detection
-- 📱 Fake QR Code Analysis
-- 💬 Scam SMS Detection
-- 📲 WhatsApp Scam Detection
-- 📧 Email Scam Detection
-- 📰 Fake News Verification
-- 🎙️ AI Call Transcript Analysis
-- 📊 Security Dashboard
-- 🧠 Explainable AI Risk Analysis
+- Scans SMS, WhatsApp messages, emails, fake job posts, investment offers, and fake news forwards.
+- Checks suspicious URLs for phishing signals, brand impersonation, risky keywords, and unsafe patterns.
+- Decodes QR images and reviews QR payloads before opening payment or website links.
+- Reviews call transcripts for OTP requests, threat language, urgency, and social engineering.
+- Generates a risk score, confidence score, evidence highlights, and recommended actions.
+- Creates security cases with status tracking, notes, timelines, and export options.
+- Provides emergency guidance for active fraud situations, including helpline 1930 and cybercrime portal support.
+- Includes a Guardian page that demonstrates browser-style warning overlays for fake login pages.
 
 ---
 
-# 🛠 Tech Stack
+## Key Features
 
-| Category | Technology |
-|-----------|------------|
-| Frontend | React.js • Vite • Tailwind CSS |
-| Backend | FastAPI • Python |
-| AI | Google Gemini API |
-| Database | SQLite |
+### Scan Anything
+
+Users can scan:
+
+- SMS and WhatsApp messages
+- Website links
+- QR code images
+- Call transcripts or audio-assisted text
+- Emails
+- Fake job offers
+- Investment messages
+- Fake news forwards
+
+### Explainable Risk Result
+
+Each scan returns:
+
+- Overall risk score
+- AI confidence
+- Rule engine score
+- URL or QR risk
+- Evidence heatmap
+- Reason breakdown
+- Recommended user action
+- Final safety seal: **Verified by BharatSHIELD**
+
+### QR Safety Flow
+
+The QR scanner is designed for safe preview first:
+
+- Upload QR image
+- Decode payload
+- Identify UPI ID, merchant name, amount, and suspicious notes
+- Detect risky payment or redirect patterns
+- Show recommendation before the user opens anything
+
+### Guardian Mode
+
+Guardian demonstrates how BharatSHIELD can work as a browser protection layer:
+
+- Detects lookalike banking pages
+- Flags OTP/password collection
+- Shows a high-risk warning overlay
+- Provides leave-site and report actions
+- Explains why the page was blocked
+
+### Report Scam
+
+The reporting flow helps users prepare complaint material:
+
+- Select scam type
+- Upload evidence
+- Generate complaint summary
+- Download complaint draft
+- Open the official cybercrime portal
+
+### Emergency Help
+
+For active fraud situations, BharatSHIELD provides:
+
+- Call 1930 action
+- Cyber Crime Portal access
+- Stop payment guidance
+- Evidence checklist
+- SOS mode instructions
+
+---
+
+## Security and Privacy Approach
+
+BharatSHIELD is built with a privacy-first demo architecture:
+
+- User accounts use hashed passwords in the backend.
+- CORS is configured for local and deployed Render origins.
+- API rate limiting is included to reduce abuse.
+- Secure response headers are added by the backend.
+- Upload controls reject unsafe file types such as executables, APKs, batch files, and zip archives.
+- Sensitive evidence is treated as temporary review data in the user flow.
+- The app does not request contacts, photos, location, OTPs, passwords, or background microphone permissions for scanning.
+
+This project provides AI-assisted risk estimation for awareness and prevention. It is not an official cybersecurity verification service.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | React, Vite, CSS |
+| Backend | FastAPI, Python |
+| AI | Gemini API support with rule-engine fallback |
+| QR Analysis | jsQR and browser BarcodeDetector support |
+| Authentication | SQLite, password hashing, local demo fallback |
 | Deployment | Render |
-| Version Control | Git • GitHub |
+| Version Control | Git and GitHub |
 
 ---
 
-# 📂 Project Structure
+## Architecture
 
 ```text
-BharatSHIELD
-│
-├── frontend
-├── backend
-├── assets
-│   ├── banner.png
-│   └── screenshots
-├── README.md
-└── requirements.txt
+React Frontend
+    |
+    |-- scan input, QR upload, audio upload, reports
+    |
+FastAPI Backend
+    |
+    |-- rule engine
+    |-- optional Gemini analysis
+    |-- URL and QR checks
+    |-- authentication
+    |-- security case response
 ```
 
 ---
 
-# 📸 Screenshots
+## Local Setup
 
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/1dcea9c2-5e99-4c3a-8eec-bf2ea9addb11" />
+### 1. Install frontend dependencies
 
+```bash
+npm install
+```
 
+### 2. Install backend dependencies
+
+```bash
+pip install -r backend/requirements.txt
+```
+
+### 3. Configure environment variables
+
+Create an environment variable only if you want Gemini-backed analysis:
+
+```bash
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+Without the key, BharatSHIELD still runs using the built-in rule engine.
+
+### 4. Start backend
+
+```bash
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+### 5. Start frontend
+
+```bash
+npm run dev
+```
+
+Frontend runs at:
+
+```text
+http://127.0.0.1:5173
+```
 
 ---
 
-# 🌐 Live Demo
+## Deployment Notes
 
-🚀 **Try BharatSHIELD Online**
+For Render or similar hosting:
 
-**Live Website:**  
-👉 https://YOUR-RENDER-LINK.onrender.com
-
----
-
-# 🔮 Future Scope
-
-- Browser Extension
-- Android & iOS Application
-- Merchant & UPI Verification
-- Live Call Protection
-- Voice Emotion Analysis
-- Government Cybercrime Portal Integration
-- Community Scam Intelligence
-- Multi-language Support
+- Set the frontend build command to `npm run build`.
+- Set the frontend publish directory to `dist`.
+- Deploy the FastAPI backend separately if backend auth and API scanning are required.
+- Set `VITE_API_BASE_URL` to the deployed backend URL.
+- Add the frontend domain to `CORS_ORIGINS` for the backend.
 
 ---
 
-# 👨‍💻 Team
+## Demo Flow
 
-## Care Coders
-
-**Built with ❤️ during the Hackathon**
+1. User signs up or logs in.
+2. User scans a suspicious WhatsApp message, URL, QR image, or transcript.
+3. BharatSHIELD displays a risk score and highlighted evidence.
+4. User reads what was found, why it is dangerous, and what action to take.
+5. If needed, user generates a complaint draft and opens the official cybercrime portal.
+6. Emergency mode guides the user to call 1930 and preserve evidence.
 
 ---
 
-## ⭐ Vision
+## Future Scope
 
-> **"Protecting people, not just devices."**
+- Installable browser extension
+- Android share-to-scan integration
+- Live camera QR scanning
+- Stronger domain reputation checks
+- Real-time phishing page comparison
+- Community scam reputation database
+- PDF complaint generation with evidence snapshots
+- Multi-language safety guidance
 
-BharatSHIELD aims to become India's trusted AI-powered digital safety platform by preventing scams before financial loss occurs.
+---
+
+## Team
+
+**Care Coders**
+
+Built for hackathon demonstration with a focus on practical cyber safety, explainable AI, and user-first scam prevention.
+
