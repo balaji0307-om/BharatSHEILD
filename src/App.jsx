@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost" ? "http://127.0.0.1:8000" : "");
 
 const samples = {
   sms: "Dear Customer, your bank account will be blocked today. Complete KYC immediately: http://sbi-verify-kyc.xyz",
@@ -186,7 +186,8 @@ function makeCaseId() {
 
 function buildSecurityCase(analysis, input, channel, user) {
   const createdAt = new Date().toISOString();
-  const status = analysis.score >= 70 ? "Suspected" : analysis.score >= 35 ? "Needs Review" : "Verified";
+  const numericScore = Number.isFinite(Number(analysis.score)) ? Number(analysis.score) : 45;
+  const status = analysis.verification_failed ? "Needs Review" : numericScore >= 70 ? "Suspected" : numericScore >= 35 ? "Needs Review" : "Verified";
   return {
     case_id: analysis.case_id || makeCaseId(),
     type: analysis.scam_type || "Security Review",
@@ -195,7 +196,7 @@ function buildSecurityCase(analysis, input, channel, user) {
     owner: user?.email || "local-user",
     ai_result: {
       risk: analysis.risk,
-      score: analysis.score,
+      score: numericScore,
       confidence: analysis.confidence,
       explanation: analysis.what_we_found || analysis.explanation || "Security review completed.",
       reasons: (analysis.signals || []).slice(0, 6).map((item) => `${item.label}: ${item.reason}`),
@@ -521,13 +522,15 @@ function clientAnalysis(text, channel) {
 function qrUnableToVerifyAnalysis(text) {
   const qrPayload = parseQrPayload(text);
   return {
-    score: 45,
-    risk: "Medium",
+    score: null,
+    risk: "Unable to verify",
     scam_type: "QR Verification Unavailable",
-    confidence: 55,
-    rule_score: 45,
-    url_score: qrPayload.hidden_redirect ? 45 : 0,
-    safety_score: 55,
+    confidence: null,
+    rule_score: null,
+    url_score: null,
+    safety_score: null,
+    verification_failed: true,
+    mode: "qr",
     signals: [{ label: "QR verification", reason: "Backend QR verification was unavailable." }],
     recommendations: [
       "Unable to verify this QR. Do not make the payment yet.",
@@ -653,11 +656,18 @@ export default function App() {
   const recognitionRef = useRef(null);
 
   const scanSteps = ["Checking message", "Finding risk words", "Checking URL", "Checking domain", "Preparing review", "Generating report"];
-  const score = result?.score || 0;
-  const confidence = result?.confidence || (result ? Math.min(99, result.score + 5) : 96);
-  const ruleScore = result ? Math.max(14, result.score - 2) : 89;
-  const urlScore = result?.url_checks?.length ? Math.max(...result.url_checks.map((item) => item.score)) : result ? Math.max(30, result.score - 7) : 95;
-  const safetyScore = result?.safety_score ?? 76;
+  const isQrResult = result?.mode === "qr" || Boolean(result?.qr_analysis);
+  const score = Number.isFinite(Number(result?.score)) ? Number(result.score) : 0;
+  const scoreDisplay = result ? (Number.isFinite(Number(result.score)) ? `${score}%` : "Unable") : "0%";
+  const confidenceDisplay = result ? (Number.isFinite(Number(result.confidence)) ? `${result.confidence}%` : "Not applicable") : "96%";
+  const ruleScoreDisplay = result
+    ? Number.isFinite(Number(result.rule_score)) ? `${result.rule_score}%` : isQrResult ? "Not applicable" : Number.isFinite(Number(result.score)) ? `${Math.max(14, score - 2)}%` : "Not applicable"
+    : "89%";
+  const urlScoreDisplay = result
+    ? Number.isFinite(Number(result.url_score)) ? `${result.url_score}%` : result?.url_checks?.length ? `${Math.max(...result.url_checks.map((item) => item.score))}%` : isQrResult ? "Not applicable" : "Not applicable"
+    : "95%";
+  const safetyScore = Number.isFinite(Number(result?.safety_score)) ? Number(result.safety_score) : 76;
+  const safetyScoreDisplay = result ? (Number.isFinite(Number(result.safety_score)) ? result.safety_score : "Not applicable") : 76;
   const incidentId = useMemo(() => `BS-${Math.floor(20000 + Math.random() * 70000)}`, [result?.created_at]);
   const guardianOtp = makeGuardianOtp(guardianForm.mobile);
   const guardianMaskedMobile = maskMobile(guardianForm.mobile);
@@ -731,6 +741,8 @@ export default function App() {
     playScanSound();
     setLoading(true);
     setError("");
+    setResult(null);
+    setContent(input);
     setShowLanding(false);
     try {
       const response = await fetch(`${API_BASE}/api/analyze`, {
@@ -739,7 +751,7 @@ export default function App() {
         body: JSON.stringify({ content: input, channel, language: "en" }),
       });
       if (!response.ok) throw new Error("Service is unavailable. Please try again.");
-      const data = await response.json();
+      const data = { ...(await response.json()), mode: channel };
       setResult(data);
       const nextHistory = [{ ...data, mode: channel, preview: input.slice(0, 120) }, ...history];
       const nextCases = [buildSecurityCase(data, input, channel, session?.user), ...cases];
@@ -749,7 +761,7 @@ export default function App() {
       saveCases(nextCases);
       saveBackendCase(nextCases[0], session?.token).catch(() => {});
     } catch (err) {
-      const fallback = channel === "qr" ? qrUnableToVerifyAnalysis(input) : clientAnalysis(input, channel);
+      const fallback = { ...(channel === "qr" ? qrUnableToVerifyAnalysis(input) : clientAnalysis(input, channel)), mode: channel };
       setResult(fallback);
       const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
       const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
@@ -758,7 +770,7 @@ export default function App() {
       setCases(nextCases);
       saveCases(nextCases);
       saveBackendCase(nextCases[0], session?.token).catch(() => {});
-      setError("");
+      setError(channel === "qr" ? "Unable to verify this QR. Do not make the payment yet." : "");
     } finally {
       setTimeout(() => setLoading(false), 420);
     }
@@ -1444,7 +1456,7 @@ export default function App() {
                 <div className="orbit-core">
                   <HeroShield />
                   <strong>Live Shield</strong>
-                  <span>{result ? `${score}% threat detected` : "Monitoring"}</span>
+                  <span>{result ? `${scoreDisplay} threat detected` : "Monitoring"}</span>
                 </div>
                 <i className="orbit-dot one" />
                 <i className="orbit-dot two" />
@@ -1454,15 +1466,15 @@ export default function App() {
               <section className="glass result-focus">
                 <div className={`gauge ${riskColor(score)}`} style={{ "--score": score || 18 }}>
                   <div className="gauge-core">
-                    <strong>{score}%</strong>
+                    <strong>{scoreDisplay}</strong>
                     <span>{result?.risk || "Threat Level"}</span>
                   </div>
                 </div>
                 <div className="score-stack">
-                  <div><span>Confidence</span><strong>{confidence}%</strong></div>
-                  <div><span>Rule Engine</span><strong>{ruleScore}%</strong></div>
-                  <div><span>URL Analysis</span><strong>{urlScore}%</strong></div>
-                  <div><span>Safety Score</span><strong>{safetyScore}</strong></div>
+                  <div><span>Confidence</span><strong>{confidenceDisplay}</strong></div>
+                  <div><span>Rule Engine</span><strong>{ruleScoreDisplay}</strong></div>
+                  <div><span>URL Analysis</span><strong>{urlScoreDisplay}</strong></div>
+                  <div><span>Safety Score</span><strong>{safetyScoreDisplay}</strong></div>
                 </div>
               </section>
 
@@ -1471,7 +1483,7 @@ export default function App() {
                 <p className="typing">{result ? result.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
                 <ol>{(result?.signals?.length ? result.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
                 <div className={`safety-seal ${riskColor(score)}`}>
-                  <strong>{score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
+                  <strong>{result?.verification_failed ? "Review Required" : score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
                   <span>Verified by BharatSHIELD</span>
                 </div>
               </section>
@@ -1886,8 +1898,8 @@ export default function App() {
             <div className="report-grid">
               <div><span>Incident ID</span><strong>{incidentId}</strong></div>
               <div><span>Threat</span><strong>{result?.scam_type || "No scan yet"}</strong></div>
-              <div><span>Risk</span><strong>{score}%</strong></div>
-              <div><span>Confidence</span><strong>{confidence}%</strong></div>
+              <div><span>Risk</span><strong>{scoreDisplay}</strong></div>
+              <div><span>Confidence</span><strong>{confidenceDisplay}</strong></div>
             </div>
             <h3>Evidence</h3>
             <p>{content}</p>

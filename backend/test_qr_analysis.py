@@ -76,6 +76,25 @@ class QRAnalysisTests(unittest.TestCase):
         self.assertGreaterEqual(second["previous_reports"], 1)
         self.assertTrue(any("previous BharatSHIELD case" in signal for signal in second["risk_signals"]))
 
+    def test_sequential_production_payloads_update_current_qr_fields(self):
+        first = main.inspect_qr_payload("upi://pay?pa=7903687480@ptaxis&pn=JASHMANDEEP%20KAUR")
+        second = main.inspect_qr_payload("upi://pay?pa=9056086377@ptaxis&pn=JASHMANDEEP%20KAUR")
+        third = main.inspect_qr_payload(
+            "upi://pay?pa=refund-support@upi&pn=Refund%20Support&am=4999&tn=Urgent%20KYC%20verification"
+        )
+
+        self.assertEqual(first["upi_id"], "7903687480@ptaxis")
+        self.assertEqual(second["upi_id"], "9056086377@ptaxis")
+        self.assertEqual(third["upi_id"], "refund-support@upi")
+        self.assertEqual(third["merchant"], "Refund Support")
+        self.assertEqual(third["amount"], "4999")
+        self.assertEqual(third["note"], "Urgent KYC verification")
+        self.assertNotIn("Recipient name contains support/refund/KYC terms", first["risk_signals"])
+        self.assertNotIn("Recipient name contains support/refund/KYC terms", second["risk_signals"])
+        self.assertIn("Recipient name contains support/refund/KYC terms", third["risk_signals"])
+        self.assertGreater(third["score"], first["score"])
+        self.assertGreater(third["score"], second["score"])
+
 
 if __name__ == "__main__":
     unittest.main()

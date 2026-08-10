@@ -931,6 +931,8 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
 
     confidence = clamp(max(55, min(98, score + 12)))
     safety_score = 100 - score
+    rule_score = qr_analysis["score"] if qr_analysis else rules["score"]
+    url_score = max([item["score"] for item in url_checks], default=None)
     reason_breakdown = [
         {"label": "Message language", "score": rules["breakdown"]["language"], "why": "Checks risky words, fake reward claims, fear tactics, and credential requests."},
         {"label": "Urgency and pressure", "score": rules["breakdown"]["pressure"], "why": "Measures panic, time pressure, threats, and emotional manipulation."},
@@ -944,6 +946,8 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         "score": score,
         "risk": risk,
         "confidence": confidence,
+        "rule_score": rule_score,
+        "url_score": url_score,
         "safety_score": safety_score,
         "scam_type": rules["scam_type"],
         "explanation": explanation,
