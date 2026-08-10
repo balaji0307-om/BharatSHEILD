@@ -13,6 +13,7 @@ __pycache__/
 *.pyc
 .venv/
 backend/*.db
+backend/.testdata/
 
 # Environment
 .env
