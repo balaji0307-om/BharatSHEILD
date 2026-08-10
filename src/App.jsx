@@ -631,6 +631,7 @@ export default function App() {
   const [history, setHistory] = useState(getStoredHistory);
   const [cases, setCases] = useState(getStoredCases);
   const [loading, setLoading] = useState(false);
+  const [activeAnalysisMode, setActiveAnalysisMode] = useState("");
   const [scanStep, setScanStep] = useState(0);
   const [showReport, setShowReport] = useState(false);
   const [showLanding, setShowLanding] = useState(true);
@@ -656,18 +657,27 @@ export default function App() {
   const recognitionRef = useRef(null);
 
   const scanSteps = ["Checking message", "Finding risk words", "Checking URL", "Checking domain", "Preparing review", "Generating report"];
-  const isQrResult = result?.mode === "qr" || Boolean(result?.qr_analysis);
-  const score = Number.isFinite(Number(result?.score)) ? Number(result.score) : 0;
-  const scoreDisplay = result ? (Number.isFinite(Number(result.score)) ? `${score}%` : "Unable") : "0%";
-  const confidenceDisplay = result ? (Number.isFinite(Number(result.confidence)) ? `${result.confidence}%` : "Not applicable") : "96%";
-  const ruleScoreDisplay = result
-    ? Number.isFinite(Number(result.rule_score)) ? `${result.rule_score}%` : isQrResult ? "Not applicable" : Number.isFinite(Number(result.score)) ? `${Math.max(14, score - 2)}%` : "Not applicable"
-    : "89%";
-  const urlScoreDisplay = result
-    ? Number.isFinite(Number(result.url_score)) ? `${result.url_score}%` : result?.url_checks?.length ? `${Math.max(...result.url_checks.map((item) => item.score))}%` : isQrResult ? "Not applicable" : "Not applicable"
-    : "95%";
-  const safetyScore = Number.isFinite(Number(result?.safety_score)) ? Number(result.safety_score) : 76;
-  const safetyScoreDisplay = result ? (Number.isFinite(Number(result.safety_score)) ? result.safety_score : "Not applicable") : 76;
+  const displayResult = result?.mode === mode ? result : null;
+  const isQrResult = displayResult?.mode === "qr" || Boolean(displayResult?.qr_analysis);
+  const isQrPanel = mode === "qr" || activeAnalysisMode === "qr" || isQrResult;
+  const isAnalyzingCurrentMode = loading && activeAnalysisMode === mode;
+  const score = Number.isFinite(Number(displayResult?.score)) ? Number(displayResult.score) : 0;
+  const scoreDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult ? (Number.isFinite(Number(displayResult.score)) ? `${score}%` : "Unable") : "0%";
+  const confidenceDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult ? (Number.isFinite(Number(displayResult.confidence)) ? `${displayResult.confidence}%` : "Not applicable") : "Not applicable";
+  const ruleScoreDisplay = isAnalyzingCurrentMode
+    ? "Analyzing"
+    : displayResult
+      ? Number.isFinite(Number(displayResult.rule_score)) ? `${displayResult.rule_score}%` : isQrResult ? "Not applicable" : Number.isFinite(Number(displayResult.score)) ? `${Math.max(14, score - 2)}%` : "Not applicable"
+      : "Not applicable";
+  const urlScoreDisplay = isAnalyzingCurrentMode
+    ? "Analyzing"
+    : displayResult
+      ? Number.isFinite(Number(displayResult.url_score)) ? `${displayResult.url_score}%` : displayResult?.url_checks?.length ? `${Math.max(...displayResult.url_checks.map((item) => item.score))}%` : isQrResult ? "Not applicable" : "Not applicable"
+      : "Not applicable";
+  const safetyScore = Number.isFinite(Number(displayResult?.safety_score)) ? Number(displayResult.safety_score) : 76;
+  const safetyScoreDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult ? (Number.isFinite(Number(displayResult.safety_score)) ? displayResult.safety_score : "Not applicable") : "Not applicable";
+  const threatCardTitle = isQrPanel ? "QR Risk Analysis" : "Threat Level";
+  const riskLevelDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult?.risk || threatCardTitle;
   const incidentId = useMemo(() => `BS-${Math.floor(20000 + Math.random() * 70000)}`, [result?.created_at]);
   const guardianOtp = makeGuardianOtp(guardianForm.mobile);
   const guardianMaskedMobile = maskMobile(guardianForm.mobile);
@@ -731,6 +741,8 @@ export default function App() {
     setContent(samples[nextMode] || "");
     setAudioFileName("");
     setError("");
+    setResult(null);
+    setActiveAnalysisMode("");
   }
 
   async function runAnalysis(input = content, channel = mode) {
@@ -740,6 +752,7 @@ export default function App() {
     }
     playScanSound();
     setLoading(true);
+    setActiveAnalysisMode(channel);
     setError("");
     setResult(null);
     setContent(input);
@@ -772,7 +785,10 @@ export default function App() {
       saveBackendCase(nextCases[0], session?.token).catch(() => {});
       setError(channel === "qr" ? "Unable to verify this QR. Do not make the payment yet." : "");
     } finally {
-      setTimeout(() => setLoading(false), 420);
+      setTimeout(() => {
+        setLoading(false);
+        setActiveAnalysisMode("");
+      }, 420);
     }
   }
 
@@ -1456,7 +1472,7 @@ export default function App() {
                 <div className="orbit-core">
                   <HeroShield />
                   <strong>Live Shield</strong>
-                  <span>{result ? `${scoreDisplay} threat detected` : "Monitoring"}</span>
+                  <span>{displayResult || isAnalyzingCurrentMode ? `${scoreDisplay} threat detected` : "Monitoring"}</span>
                 </div>
                 <i className="orbit-dot one" />
                 <i className="orbit-dot two" />
@@ -1464,10 +1480,11 @@ export default function App() {
               </section>
 
               <section className="glass result-focus">
+                <h2>{threatCardTitle}</h2>
                 <div className={`gauge ${riskColor(score)}`} style={{ "--score": score || 18 }}>
                   <div className="gauge-core">
                     <strong>{scoreDisplay}</strong>
-                    <span>{result?.risk || "Threat Level"}</span>
+                    <span>{riskLevelDisplay}</span>
                   </div>
                 </div>
                 <div className="score-stack">
@@ -1480,10 +1497,10 @@ export default function App() {
 
               <section className="glass ai-card">
                 <h2>BharatSHIELD Review</h2>
-                <p className="typing">{result ? result.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
-                <ol>{(result?.signals?.length ? result.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
+                <p className="typing">{isAnalyzingCurrentMode ? "Analyzing current QR payload..." : displayResult ? displayResult.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
+                <ol>{(displayResult?.signals?.length ? displayResult.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
                 <div className={`safety-seal ${riskColor(score)}`}>
-                  <strong>{result?.verification_failed ? "Review Required" : score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
+                  <strong>{isAnalyzingCurrentMode ? "Analyzing" : displayResult?.verification_failed ? "Review Required" : score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
                   <span>Verified by BharatSHIELD</span>
                 </div>
               </section>
