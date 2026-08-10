@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost" ? "http://127.0.0.1:8000" : "");
+const LANDING_DURATION_MS = 5200;
 
 const samples = {
   sms: "Dear Customer, your bank account will be blocked today. Complete KYC immediately: http://sbi-verify-kyc.xyz",
@@ -771,7 +772,7 @@ export default function App() {
     const timer = setTimeout(() => {
       setShowLanding(false);
       setShowAuth(!session);
-    }, 2000);
+    }, LANDING_DURATION_MS);
     return () => clearTimeout(timer);
   }, [session]);
 
