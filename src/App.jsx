@@ -602,6 +602,84 @@ function HeroShield() {
   );
 }
 
+const landingSignals = [
+  { type: "QR", text: "upi://pay" },
+  { type: "URL", text: "sbi-secure-login" },
+  { type: "SMS", text: "OTP request" },
+  { type: "UPI", text: "refund-support@upi" },
+];
+
+function CinematicLanding({ onScan, onExplore }) {
+  return (
+    <section className="landing-screen cinematic-landing">
+      <div className="landing-mesh" aria-hidden="true" />
+      <div className="landing-light landing-light-left" aria-hidden="true" />
+      <div className="landing-light landing-light-right" aria-hidden="true" />
+      <div className="particle-field" aria-hidden="true">
+        {Array.from({ length: 30 }).map((_, index) => (
+          <span
+            key={index}
+            style={{
+              "--i": String(index),
+              "--x": `${(index * 37) % 100}%`,
+              "--y": `${(index * 19) % 100}%`,
+              "--z": `${index * 2}px`,
+              "--duration": `${5.5 + index * 0.12}s`,
+              "--delay": `${index * -0.22}s`,
+            }}
+          />
+        ))}
+      </div>
+      <div className="threat-cloud" aria-hidden="true">
+        {landingSignals.map((signal, index) => (
+          <span
+            key={`${signal.type}-${signal.text}`}
+            style={{
+              "--i": String(index),
+              "--x": `${9 + index * 18}%`,
+              "--y": `${15 + index * 13}%`,
+              "--delay": `${index * -1.3}s`,
+            }}
+          >
+            <b>{signal.type}</b>
+            {signal.text}
+          </span>
+        ))}
+      </div>
+
+      <div className="landing-stage">
+        <div className="shield-rings" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </div>
+        <div className="shield-3d">
+          <HeroShield />
+          <span className="shield-scan" aria-hidden="true" />
+        </div>
+      </div>
+
+      <div className="landing-copy">
+        <p>AI Cyber Safety Layer</p>
+        <h1>BharatSHIELD</h1>
+        <span>Protect every link, QR code, message, and payment before it becomes a threat.</span>
+        <div className="landing-actions">
+          <button type="button" className="primary" onClick={onScan}>Scan a Threat</button>
+          <button type="button" onClick={onExplore}>Explore Protection</button>
+        </div>
+      </div>
+
+      <div className="landing-status">
+        <strong>India Focused. Safety First.</strong>
+        <div className="real-loader" aria-label="Loading dashboard">
+          <span />
+        </div>
+        <small>Initializing shield</small>
+      </div>
+    </section>
+  );
+}
+
 function playScanSound() {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -1138,23 +1216,26 @@ export default function App() {
   return (
     <>
       {showLanding && (
-        <section className="landing-screen">
-          <div className="circuit-field circuit-left" />
-          <div className="circuit-field circuit-right" />
-          <div className="landing-center">
-            <HeroShield />
-            <h1 className="landing-title">BHARAT<span>SHIELD</span></h1>
-            <p className="landing-tagline">PROTECTING INDIA&apos;S DIGITAL FUTURE</p>
-          </div>
-          <div className="india-skyline" />
-          <div className="tricolor-clouds" />
-          <div className="landing-footer">
-            <p>India Focused. Safety First.</p>
-            <div className="real-loader" aria-label="Loading dashboard">
-              <span />
-            </div>
-          </div>
-        </section>
+        <CinematicLanding
+          onScan={() => {
+            setShowLanding(false);
+            if (session) {
+              setShowAuth(false);
+              setActiveSection("Scan");
+            } else {
+              setShowAuth(true);
+            }
+          }}
+          onExplore={() => {
+            setShowLanding(false);
+            if (session) {
+              setShowAuth(false);
+              setActiveSection("Guardian");
+            } else {
+              setShowAuth(true);
+            }
+          }}
+        />
       )}
 
       {!showLanding && showAuth && (
