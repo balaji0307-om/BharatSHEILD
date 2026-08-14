@@ -2355,3 +2355,73 @@ mark.danger {
     background: #fff;
   }
 }
+
+.qr-security-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.qr-section h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+  color: #0b2446;
+}
+
+.ownership-disclaimer {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: #687b8e;
+  line-height: 1.45;
+}
+
+.tamper-alert {
+  border-radius: 12px;
+  padding: 14px 16px;
+  border: 1px solid #f0c4c4;
+  background: #fff5f5;
+}
+
+.tamper-alert.severity-high {
+  border-color: #e57373;
+  background: #ffebee;
+}
+
+.tamper-alert h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.tamper-alert strong {
+  display: block;
+  color: #b71c1c;
+  margin-bottom: 6px;
+}
+
+.tamper-changes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.tamper-changes li {
+  margin-bottom: 6px;
+}
+
+.tamper-changes span {
+  display: block;
+  color: #687b8e;
+  font-size: 0.82rem;
+}
+
+.status-ok {
+  color: #1b7f4a;
+}
+
+.status-alert {
+  color: #b71c1c;
+}
+
+.risk-signals {
+  margin-top: 8px;
+  font-size: 0.88rem;
+  color: #687b8e;
+}

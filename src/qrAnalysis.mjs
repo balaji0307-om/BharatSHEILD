@@ -1,4 +1,13 @@
-const SUSPICIOUS_UPI_TERMS = ["fake", "refund", "support", "verify", "kyc", "helpdesk", "customer"];
+import {
+  buildIdentityCheck,
+  buildIdentityRecord,
+  compareIdentity,
+  displayPayeeName,
+  getVerifiedQrBaseline,
+  OWNERSHIP_DISCLAIMER,
+  saveVerifiedQrBaseline,
+  tamperRiskBoost,
+} from "./qrIdentity.mjs";
 const PRESSURE_TERMS = ["kyc", "refund", "verify", "blocked", "fee", "urgent", "registration"];
 const MERCHANT_SUSPICIOUS_TERMS = ["refund", "support", "kyc", "verification", "bank", "helpdesk"];
 const UPI_ID_PATTERN = /^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z][a-zA-Z0-9.\-_]{2,}$/;
@@ -21,10 +30,15 @@ function parseUpiFields(text) {
   const raw = text.trim();
   const url = new URL(raw);
   const upiId = url.searchParams.get("pa") || "";
-  const merchant = url.searchParams.get("pn") || "";
+  const merchant = displayPayeeName(url.searchParams.get("pn") || "");
+  let note = url.searchParams.get("tn") || "";
+  try {
+    note = note ? decodeURIComponent(note).trim() : "";
+  } catch {
+    note = note.trim();
+  }
   const amount = url.searchParams.get("am") || "";
-  const note = url.searchParams.get("tn") || "";
-  const [, , upiHandle = ""] = upiId.split("@");
+  const [, upiHandle = ""] = upiId.split("@");
   return {
     raw,
     scheme: url.protocol.replace(":", ""),
@@ -95,8 +109,9 @@ export function countLocalPayeeReports(upiId) {
   }
 }
 
-export async function inspectQrPayloadLocal(text) {
+export async function inspectQrPayloadLocal(text, verifiedBaseline = null) {
   try {
+    const baseline = verifiedBaseline ?? getVerifiedQrBaseline();
     const fields = parseUpiFields(text);
     const {
       raw,
@@ -112,8 +127,10 @@ export async function inspectQrPayloadLocal(text) {
       hiddenRedirect,
     } = fields;
     const loweredPayload = [raw, upiId, merchant, note].join(" ").toLowerCase();
-    const normalized = [scheme, upiId, merchant, amount, note, host, pathname].join("|").toLowerCase();
-    const fingerprint = `BS-QR-${await sha256Prefix(normalized)}`;
+    const identity = await buildIdentityRecord(upiId, merchant, amount, note, destinationUrl);
+    const tamper = compareIdentity(identity, baseline);
+    const identityCheck = buildIdentityCheck(identity, tamper);
+    const fingerprint = identity.fingerprint;
     const checks = [];
     const riskSignals = [];
     let score = 0;
@@ -203,6 +220,13 @@ export async function inspectQrPayloadLocal(text) {
       riskSignals.push("QR payload references OTP/PIN/password");
     }
 
+    if (tamper.tamper_detected) {
+      const tamperBoost = tamperRiskBoost(tamper);
+      score += tamperBoost;
+      riskSignals.push(tamper.change_status || "QR payload changed from verified baseline");
+      if (tamper.headline) riskSignals.push(tamper.headline);
+    }
+
     const previousReports = countLocalPayeeReports(upiId);
     if (previousReports) {
       score += Math.min(30, 12 + previousReports * 6);
@@ -245,20 +269,38 @@ export async function inspectQrPayloadLocal(text) {
       risk_signals: riskSignals,
       hidden_redirect: hiddenRedirect,
       checks,
+      identity,
+      identity_check: identityCheck,
+      tamper_check: tamper,
     };
   } catch {
     return null;
   }
 }
 
-export async function buildLocalQrAnalysisResult(text) {
-  const qrAnalysis = await inspectQrPayloadLocal(text);
+export async function buildLocalQrAnalysisResult(text, verifiedBaseline = null) {
+  const qrAnalysis = await inspectQrPayloadLocal(text, verifiedBaseline);
   if (!qrAnalysis) throw new Error("Could not parse QR payload.");
 
+  const tamper = qrAnalysis.tamper_check || {};
   const score = qrAnalysis.score;
   const risk = score >= 75 ? "Critical" : score >= 55 ? "High" : score >= 30 ? "Medium" : "Low";
   const confidence = score === 0 ? 62 : clamp(Math.max(55, Math.min(98, score + 12)));
   const signals = qrAnalysis.risk_signals.map((reason) => ({ label: "QR payment", reason }));
+  if (tamper.tamper_detected) {
+    signals.unshift({ label: "QR tamper check", reason: tamper.headline || tamper.change_status });
+  }
+
+  const recommendations = [
+    OWNERSHIP_DISCLAIMER,
+    "Verify recipient, merchant, amount, and purpose inside your UPI app before paying.",
+    "Never share OTP, UPI PIN, passwords, or card details.",
+  ];
+  if (tamper.tamper_detected) {
+    recommendations.push("This QR differs from your previously verified QR baseline. Confirm payee details before paying.");
+  } else if (qrAnalysis.recipient_reputation === "Unknown") {
+    recommendations.push("Unknown recipient — not verified safe. Confirm payee identity before payment.");
+  }
 
   return {
     score,
@@ -267,15 +309,13 @@ export async function buildLocalQrAnalysisResult(text) {
     rule_score: score,
     url_score: qrAnalysis.hidden_redirect ? score : null,
     safety_score: 100 - score,
-    scam_type: qrAnalysis.upi_id !== "Not found" ? (score >= 55 ? "UPI QR Fraud Risk" : "UPI QR Review") : "QR Review",
+    scam_type: tamper.tamper_detected
+      ? (tamper.severity === "high" ? "QR Identity Tampering" : "QR Tamper Review")
+      : qrAnalysis.upi_id !== "Not found"
+        ? (score >= 55 ? "UPI QR Fraud Risk" : "UPI QR Review")
+        : "QR Review",
     signals,
-    recommendations: [
-      "Verify recipient, merchant, amount, and purpose inside your UPI app before paying.",
-      "Never share OTP, UPI PIN, passwords, or card details.",
-      qrAnalysis.recipient_reputation === "Unknown"
-        ? "Unknown recipient — not verified safe. Confirm payee identity before payment."
-        : "Do not approve payment if the sender is pressuring you.",
-    ],
+    recommendations,
     reason_breakdown: [
       { label: "Message language", score: 0, why: "QR payload language was reviewed locally." },
       { label: "Urgency and pressure", score: PRESSURE_TERMS.some((term) => `${qrAnalysis.note}`.toLowerCase().includes(term)) ? 82 : 16, why: "Payment note pressure terms are reviewed." },
@@ -287,11 +327,17 @@ export async function buildLocalQrAnalysisResult(text) {
       : [],
     qr_analysis: qrAnalysis,
     call_analysis: { emotion: "Not analyzed", pressure_score: 0, live_warning: score >= 70 },
-    what_we_found: `QR payment review for recipient ${qrAnalysis.upi_id}, merchant ${qrAnalysis.merchant}, amount ${qrAnalysis.amount}, note ${qrAnalysis.note}.`,
-    why_dangerous: qrAnalysis.risk_signals.length
-      ? `Risk signals: ${qrAnalysis.risk_signals.slice(0, 4).join("; ")}.`
-      : "Recipient reputation is unknown. Verify the payee inside your UPI app before paying.",
+    what_we_found: tamper.tamper_detected
+      ? `${tamper.headline || tamper.change_status}: ${tamper.explanation}`
+      : `QR payment review for recipient ${qrAnalysis.upi_id}, merchant ${qrAnalysis.merchant}, amount ${qrAnalysis.amount}, note ${qrAnalysis.note}.`,
+    why_dangerous: tamper.tamper_detected
+      ? tamper.explanation
+      : qrAnalysis.risk_signals.length
+        ? `Risk signals: ${qrAnalysis.risk_signals.slice(0, 4).join("; ")}.`
+        : "Recipient reputation is unknown. Verify the payee inside your UPI app before paying.",
     how_sure: `${confidence}% confidence based on local QR payload checks.`,
     local_review: true,
   };
 }
+
+export { getVerifiedQrBaseline, saveVerifiedQrBaseline, OWNERSHIP_DISCLAIMER };

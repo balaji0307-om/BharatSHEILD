@@ -8,7 +8,7 @@ from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from time import time
 
 import httpx
@@ -16,6 +16,25 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+try:
+    from .qr_identity import (
+        build_identity_check,
+        build_identity_fingerprint,
+        build_identity_record,
+        compare_identity,
+        display_payee_name,
+        tamper_risk_boost,
+    )
+except ImportError:  # pragma: no cover - direct script/test imports
+    from qr_identity import (
+        build_identity_check,
+        build_identity_fingerprint,
+        build_identity_record,
+        compare_identity,
+        display_payee_name,
+        tamper_risk_boost,
+    )
 
 try:
     from reportlab.lib.pagesizes import A4
@@ -58,6 +77,11 @@ class AnalyzeRequest(BaseModel):
     content: str = Field(min_length=1)
     channel: str = "message"
     language: str = "en"
+    verified_baseline: dict[str, Any] | None = None
+
+
+class QrVerifyRequest(BaseModel):
+    content: str = Field(min_length=1)
 
 
 class UrlCheckRequest(BaseModel):
@@ -327,31 +351,25 @@ def count_previous_payee_reports(upi_id: str, fingerprint: str) -> int:
     return count
 
 
-def qr_fingerprint(parsed, upi_id: str, merchant: str, amount: str, notes: str) -> str:
-    normalized = "|".join([
-        parsed.scheme.lower(),
-        upi_id.strip().lower(),
-        merchant.strip().lower(),
-        amount.strip(),
-        notes.strip().lower(),
-        parsed.netloc.lower(),
-        parsed.path.lower(),
-    ])
-    return "BS-QR-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8].upper()
+def qr_fingerprint(parsed, upi_id: str, merchant: str, amount: str, notes: str, destination_url: str = "") -> str:
+    return build_identity_fingerprint(upi_id, merchant, amount, notes, destination_url)
 
 
-def inspect_qr_payload(text: str) -> dict[str, Any]:
+def inspect_qr_payload(text: str, verified_baseline: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = text.strip()
     parsed = urlparse(raw)
     qs = parse_qs(parsed.query)
     amount = qs.get("am", [""])[0]
     upi_id = qs.get("pa", [""])[0]
-    merchant = qs.get("pn", [""])[0]
-    notes = qs.get("tn", [""])[0]
+    merchant = display_payee_name(qs.get("pn", [""])[0])
+    notes = unquote(qs.get("tn", [""])[0]).strip() if qs.get("tn", [""])[0] else ""
     _, _, upi_handle = upi_id.partition("@")
     lowered_payload = " ".join([raw, upi_id, merchant, notes]).lower()
     destination_url = raw if parsed.scheme in {"http", "https"} else ""
-    fingerprint = qr_fingerprint(parsed, upi_id, merchant, amount, notes)
+    fingerprint = qr_fingerprint(parsed, upi_id, merchant, amount, notes, destination_url)
+    identity = build_identity_record(upi_id, merchant, amount, notes, destination_url)
+    tamper = compare_identity(identity, verified_baseline)
+    identity_check = build_identity_check(identity, tamper)
     checks: list[dict[str, str]] = []
     risk_signals: list[str] = []
     score = 0
@@ -431,6 +449,13 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         score += 26
         risk_signals.append("QR payload references OTP/PIN/password")
 
+    if tamper.get("tamper_detected"):
+        tamper_boost = tamper_risk_boost(tamper)
+        score += tamper_boost
+        risk_signals.append(tamper.get("change_status", "QR payload changed from verified baseline"))
+        if tamper.get("headline"):
+            risk_signals.append(tamper["headline"])
+
     previous_reports = count_previous_payee_reports(upi_id, fingerprint)
     if previous_reports:
         score += min(30, 12 + previous_reports * 6)
@@ -473,6 +498,9 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         "risk_signals": risk_signals,
         "hidden_redirect": parsed.scheme in {"http", "https"} and bool(parsed.netloc),
         "checks": checks,
+        "identity": identity,
+        "identity_check": identity_check,
+        "tamper_check": tamper,
     }
 
 
@@ -748,19 +776,33 @@ def case_text(case: dict[str, Any]) -> str:
     qr = ai.get("qr_analysis") or case.get("qr_analysis") or {}
     qr_lines = []
     if qr:
+        identity = qr.get("identity_check") or qr.get("identity") or {}
+        tamper = qr.get("tamper_check") or {}
         qr_lines = [
             "",
             "QR Analysis:",
             f"QR Fingerprint: {qr.get('fingerprint') or 'Not generated'}",
-            f"Recipient / UPI ID: {qr.get('upi_id') or 'Not found'}",
-            f"Merchant: {qr.get('merchant') or 'Not found'}",
+            f"Recipient / UPI ID: {qr.get('upi_id') or identity.get('upi_id') or 'Not found'}",
+            f"Recipient Name: {identity.get('recipient_name') or qr.get('merchant') or 'Not found'}",
+            f"Phone (from UPI): {identity.get('phone_number') or 'Not found'}",
             f"Amount: {qr.get('amount') or 'Not found'}",
-            f"Payment Note: {qr.get('note') or 'Not found'}",
+            f"Payment Note: {qr.get('note') or identity.get('payment_note') or 'Not found'}",
+            f"Consistency: {identity.get('consistency_state') or 'Not assessed'}",
             f"Destination URL: {qr.get('destination_url') or 'Not found'}",
             f"Recipient Reputation: {qr.get('recipient_reputation') or 'Unknown'}",
             f"Previous BharatSHIELD Reports: {qr.get('previous_reports', 0)}",
             f"Risk Signals: {', '.join(qr.get('risk_signals') or []) or 'None'}",
         ]
+        if tamper.get("tamper_detected"):
+            qr_lines.extend([
+                "",
+                "Tamper Check:",
+                f"Status: {tamper.get('change_status')}",
+                f"Severity: {tamper.get('severity')}",
+                f"Summary: {tamper.get('summary') or tamper.get('explanation')}",
+            ])
+            for change in tamper.get("changes") or []:
+                qr_lines.append(f"- {change.get('field')}: {change.get('previous')} -> {change.get('current')}")
     return "\n".join([
         "BharatSHIELD Security Investigation Report",
         "",
@@ -900,9 +942,14 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
     is_qr = request.channel == "qr" or request.content.lower().startswith("upi://")
 
     if is_qr:
-        qr_analysis = inspect_qr_payload(request.content)
+        qr_analysis = inspect_qr_payload(request.content, request.verified_baseline)
         score = qr_analysis["score"]
-        signals = [{"label": "QR payment", "reason": signal} for signal in qr_analysis.get("risk_signals", [])[:6]]
+        signals = [{"label": "QR payment", "reason": signal} for signal in qr_analysis.get("risk_signals", [])[:8]]
+        if qr_analysis.get("tamper_check", {}).get("tamper_detected"):
+            signals.insert(0, {
+                "label": "QR tamper check",
+                "reason": qr_analysis["tamper_check"].get("headline") or qr_analysis["tamper_check"].get("change_status", "QR change detected"),
+            })
         url_checks: list[dict[str, Any]] = []
         destination = qr_analysis.get("destination_url")
         if qr_analysis.get("hidden_redirect") and destination not in {"", "Not found"}:
@@ -1009,13 +1056,43 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         "reasons": [f"{item['label']}: {item['reason']}" for item in rules["signals"][:6]],
         "qr_analysis": qr_analysis,
     }
+    tamper = (qr_analysis or {}).get("tamper_check", {})
     result["investigation"] = {
-        "status": "Suspected" if score >= 70 else "Needs Review" if score >= 35 else "Verified",
-        "note": "",
+        "status": "Suspected" if score >= 70 or tamper.get("severity") == "high" else "Needs Review" if score >= 35 or tamper.get("tamper_detected") else "Verified",
+        "note": tamper.get("summary") if tamper.get("tamper_detected") else "",
         "reviewed_by": None,
         "reviewed_at": None,
     }
     return result
+
+
+@app.post("/api/qr/verify")
+def verify_qr(payload: QrVerifyRequest, request: Request) -> dict[str, Any]:
+    user = auth_user(request)
+    qr_analysis = inspect_qr_payload(payload.content)
+    baseline = {
+        **qr_analysis.get("identity", {}),
+        "user_verified": True,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "verified_by": user.get("email"),
+    }
+    case = save_security_case({
+        "case_id": f"BS-{secrets.randbelow(9000) + 1000}",
+        "owner": user["email"],
+        "type": "QR Verified Baseline",
+        "channel": "qr",
+        "input": payload.content,
+        "ai_result": {
+            "risk": "Low",
+            "score": qr_analysis["score"],
+            "confidence": 62,
+            "explanation": "User verified this QR baseline for future tamper comparison.",
+            "reasons": ["User verified QR baseline saved."],
+            "qr_analysis": {**qr_analysis, "user_verified": True, "verified_baseline": baseline},
+        },
+        "investigation": {"status": "Verified", "note": "User verified QR baseline.", "reviewed_by": user.get("name"), "reviewed_at": datetime.now(timezone.utc).isoformat()},
+    })
+    return {"baseline": baseline, "case": case}
 
 
 @app.post("/api/url-check")

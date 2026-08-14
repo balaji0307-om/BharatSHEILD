@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 import { buildMetricDisplay } from "./displayMetrics.mjs";
-import { buildLocalQrAnalysisResult } from "./qrAnalysis.mjs";
+import {
+  buildLocalQrAnalysisResult,
+  getVerifiedQrBaseline,
+  saveVerifiedQrBaseline,
+} from "./qrAnalysis.mjs";
 
 function resolveApiBase() {
   const configured = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "");
@@ -202,7 +206,28 @@ function makeCaseId() {
 function buildSecurityCase(analysis, input, channel, user) {
   const createdAt = new Date().toISOString();
   const numericScore = Number.isFinite(Number(analysis.score)) ? Number(analysis.score) : 45;
-  const status = analysis.verification_failed ? "Needs Review" : numericScore >= 70 ? "Suspected" : numericScore >= 35 ? "Needs Review" : "Verified";
+  const tamper = analysis.qr_analysis?.tamper_check;
+  let status = analysis.verification_failed
+    ? "Needs Review"
+    : numericScore >= 70
+      ? "Suspected"
+      : numericScore >= 35
+        ? "Needs Review"
+        : "Verified";
+  if (tamper?.tamper_detected) {
+    status = tamper.severity === "high" ? "Suspected" : "Needs Review";
+  } else if (analysis.scam_type === "QR Verified Baseline" || analysis.qr_analysis?.user_verified) {
+    status = "Verified";
+  }
+  const timeline = [
+    { label: "Content submitted", time: createdAt },
+    { label: "Analysis completed", time: createdAt },
+    { label: `${analysis.risk || "Medium"} risk detected`, time: createdAt },
+  ];
+  if (tamper?.tamper_detected) {
+    timeline.push({ label: tamper.headline || tamper.change_status || "QR tamper detected", time: createdAt });
+  }
+  timeline.push({ label: `Case marked ${status}`, time: createdAt });
   return {
     case_id: analysis.case_id || makeCaseId(),
     type: analysis.scam_type || "Security Review",
@@ -219,16 +244,11 @@ function buildSecurityCase(analysis, input, channel, user) {
     },
     investigation: {
       status,
-      note: "",
+      note: tamper?.tamper_detected ? tamper.summary || tamper.explanation || "" : "",
       reviewed_by: null,
       reviewed_at: null,
     },
-    timeline: [
-      { label: "Content submitted", time: createdAt },
-      { label: "Analysis completed", time: createdAt },
-      { label: `${analysis.risk || "Medium"} risk detected`, time: createdAt },
-      { label: `Case marked ${status}`, time: createdAt },
-    ],
+    timeline,
     created_at: createdAt,
   };
 }
@@ -763,12 +783,18 @@ export default function App() {
   }
 
   async function analyzeQrPayload(input) {
+    const verifiedBaseline = getVerifiedQrBaseline();
     if (API_BASE) {
       try {
         const response = await fetch(`${API_BASE}/api/analyze`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: input, channel: "qr", language: "en" }),
+          body: JSON.stringify({
+            content: input,
+            channel: "qr",
+            language: "en",
+            verified_baseline: verifiedBaseline,
+          }),
         });
         const contentType = response.headers.get("content-type") || "";
         if (response.ok && contentType.includes("application/json")) {
@@ -779,7 +805,64 @@ export default function App() {
         // Use local deterministic QR review when backend is unavailable.
       }
     }
-    return { ...(await buildLocalQrAnalysisResult(input)), mode: "qr" };
+    return { ...(await buildLocalQrAnalysisResult(input, verifiedBaseline)), mode: "qr" };
+  }
+
+  async function verifyAndSaveQr() {
+    if (!content.trim()) {
+      setError("Upload a QR image or paste decoded QR content first.");
+      return;
+    }
+    const identity = displayResult?.qr_analysis?.identity;
+    if (!identity) {
+      setError("Analyze the QR first before saving a verified baseline.");
+      return;
+    }
+    setError("");
+    if (API_BASE && session?.token) {
+      try {
+        const response = await fetch(`${API_BASE}/api/qr/verify`, {
+          method: "POST",
+          headers: { ...authHeaders(session.token), "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.baseline) saveVerifiedQrBaseline(data.baseline);
+          if (data.case) {
+            const nextCases = [data.case, ...cases.filter((item) => item.case_id !== data.case.case_id)];
+            setCases(nextCases);
+            saveCases(nextCases);
+          }
+          await runAnalysis(content, "qr");
+          return;
+        }
+      } catch {
+        // Fall back to local baseline storage.
+      }
+    }
+    const baseline = saveVerifiedQrBaseline(identity);
+    const verifiedAnalysis = {
+      score: displayResult?.score ?? 0,
+      risk: "Low",
+      confidence: 62,
+      scam_type: "QR Verified Baseline",
+      what_we_found: "User verified this QR baseline for future tamper comparison.",
+      signals: [{ label: "QR baseline", reason: "User verified QR baseline saved locally." }],
+      qr_analysis: { ...displayResult.qr_analysis, user_verified: true, verified_baseline: baseline },
+    };
+    const verifiedCase = buildSecurityCase(verifiedAnalysis, content, "qr", session?.user);
+    verifiedCase.investigation = {
+      status: "Verified",
+      note: "User verified QR baseline.",
+      reviewed_by: session?.user?.name || null,
+      reviewed_at: new Date().toISOString(),
+    };
+    const nextCases = [verifiedCase, ...cases];
+    setCases(nextCases);
+    saveCases(nextCases);
+    saveBackendCase(verifiedCase, session?.token).catch(() => {});
+    await runAnalysis(content, "qr");
   }
 
   async function runAnalysis(input = content, channel = mode) {
@@ -818,7 +901,7 @@ export default function App() {
     } catch (err) {
       if (channel === "qr") {
         try {
-          const fallback = { ...(await buildLocalQrAnalysisResult(input)), mode: channel };
+          const fallback = { ...(await buildLocalQrAnalysisResult(input, getVerifiedQrBaseline())), mode: channel };
           setResult(fallback);
           const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
           const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
@@ -1044,16 +1127,28 @@ export default function App() {
 
   function caseReportText(item) {
     const qr = item.ai_result?.qr_analysis || null;
+    const identity = qr?.identity_check || qr?.identity || null;
+    const tamper = qr?.tamper_check || null;
     const qrLines = qr ? [
       "",
       "QR Analysis:",
       `QR Fingerprint: ${qr.fingerprint || "Not generated"}`,
-      `Recipient / UPI ID: ${qr.upi_id || "Not found"}`,
-      `Merchant: ${qr.merchant || "Not found"}`,
+      `Recipient / UPI ID: ${qr.upi_id || identity?.upi_id || "Not found"}`,
+      `Recipient Name: ${identity?.recipient_name || qr.merchant || "Not found"}`,
+      `Phone (from UPI): ${identity?.phone_number || "Not found"}`,
       `Amount: ${qr.amount || "Not found"}`,
-      `Payment Note: ${qr.note || "Not found"}`,
+      `Payment Note: ${qr.note || identity?.payment_note || "Not found"}`,
+      `Consistency: ${identity?.consistency_state || "Not assessed"}`,
       `Recipient Reputation: ${qr.recipient_reputation || "Unknown"}`,
       `Previous BharatSHIELD Reports: ${qr.previous_reports ?? 0}`,
+      ...(tamper?.tamper_detected ? [
+        "",
+        "Tamper Check:",
+        `Status: ${tamper.change_status}`,
+        `Severity: ${tamper.severity}`,
+        `Summary: ${tamper.summary || tamper.explanation}`,
+        ...(tamper.changes?.length ? ["Changes Detected:", ...tamper.changes.map((change) => `- ${change.field}: ${change.previous} -> ${change.current}`)] : []),
+      ] : []),
       ...(qr.risk_signals?.length ? ["Risk Signals:", ...qr.risk_signals.map((signal) => `- ${signal}`)] : []),
     ] : [];
     return [
@@ -1214,6 +1309,9 @@ export default function App() {
   const isUrlMode = mode === "url";
   const isTextMode = !isQrMode && !isCallMode && !isUrlMode;
   const analyzeLabel = isQrMode ? "Analyze QR" : isCallMode ? "Analyze Call" : isUrlMode ? "Analyze Website" : "Analyze Threat";
+  const qrIdentityCheck = displayResult?.qr_analysis?.identity_check;
+  const qrTamper = displayResult?.qr_analysis?.tamper_check;
+  const qrIdentity = displayResult?.qr_analysis?.identity;
   const complaintSummary = displayResult ? `${displayResult.scam_type} suspected with ${score}% risk. Evidence: ${content.slice(0, 180)}` : "Select a report type and add evidence to prepare a complaint summary.";
 
   return (
@@ -1503,6 +1601,9 @@ export default function App() {
 
                     <div className="toolrow">
                       <button className="primary" onClick={() => runAnalysis(content, mode)} disabled={loading}>{loading ? "Scanning..." : analyzeLabel}</button>
+                      {isQrMode && displayResult?.qr_analysis?.identity && (
+                        <button type="button" onClick={verifyAndSaveQr} disabled={loading}>Verify &amp; Save QR</button>
+                      )}
                       <button onClick={() => setShowReport(true)}>Cyber Report</button>
                     </div>
                     {error && <p className="error">{error}</p>}
@@ -1602,21 +1703,76 @@ export default function App() {
             </div>
 
             <div className="glass">
-              <h2>QR / Call Deep Check</h2>
-              <div className="intel-list">
-                <div><span>Recipient</span><strong>{displayResult?.qr_analysis?.upi_id || "Not found"}</strong></div>
-                <div><span>Merchant</span><strong>{displayResult?.qr_analysis?.merchant || "Not found"}</strong></div>
-                <div><span>Amount</span><strong>{displayResult?.qr_analysis?.amount || "Not found"}</strong></div>
-                <div><span>Payment Note</span><strong>{displayResult?.qr_analysis?.note || "Not found"}</strong></div>
-                <div><span>Destination URL</span><strong>{displayResult?.qr_analysis?.destination_url || "Not found"}</strong></div>
-                <div><span>Recipient Reputation</span><strong>{displayResult?.qr_analysis?.recipient_reputation || "Unknown"}</strong></div>
-                <div><span>Previous BharatSHIELD Reports</span><strong>{displayResult?.qr_analysis?.previous_reports ?? 0}</strong></div>
-                <div><span>QR Fingerprint</span><strong>{displayResult?.qr_analysis?.fingerprint || "Not generated"}</strong></div>
-                <div><span>Risk Signals</span><strong>{displayResult?.qr_analysis?.risk_signals?.length ? displayResult.qr_analysis.risk_signals.join(", ") : "None"}</strong></div>
-                <div><span>Voice emotion</span><strong>{displayResult?.call_analysis?.emotion || "Not analyzed"}</strong></div>
-                <div><span>Pressure score</span><strong>{displayResult?.call_analysis?.pressure_score ?? 0}%</strong></div>
-                <div><span>Live warning</span><strong>{displayResult?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>
-              </div>
+              <h2>{isQrPanel ? "QR Security Analysis" : "QR / Call Deep Check"}</h2>
+              {isQrPanel ? (
+                <div className="qr-security-panel">
+                  <div className="qr-section">
+                    <h3>Identity Check</h3>
+                    <div className="intel-list">
+                      <div><span>Recipient Name</span><strong>{qrIdentityCheck?.recipient_name || qrIdentity?.recipient_name || displayResult?.qr_analysis?.merchant || "Not found"}</strong></div>
+                      <div><span>UPI ID</span><strong>{qrIdentityCheck?.upi_id || displayResult?.qr_analysis?.upi_id || "Not found"}</strong></div>
+                      <div><span>Phone (from UPI)</span><strong>{qrIdentityCheck?.phone_number || qrIdentity?.phone_number || "Not found"}</strong></div>
+                      <div><span>Amount</span><strong>{qrIdentityCheck?.amount || displayResult?.qr_analysis?.amount || "Not found"}</strong></div>
+                      <div><span>Payment Note</span><strong>{qrIdentityCheck?.payment_note || displayResult?.qr_analysis?.note || "Not found"}</strong></div>
+                      <div><span>QR Fingerprint</span><strong>{qrIdentityCheck?.fingerprint || displayResult?.qr_analysis?.fingerprint || "Not generated"}</strong></div>
+                      <div><span>Consistency</span><strong className={qrTamper?.tamper_detected ? "status-alert" : "status-ok"}>{qrIdentityCheck?.consistency_state || "Not assessed"}</strong></div>
+                      <div><span>Recipient Reputation</span><strong>{displayResult?.qr_analysis?.recipient_reputation || "Unknown"}</strong></div>
+                      <div><span>Previous Reports</span><strong>{displayResult?.qr_analysis?.previous_reports ?? 0}</strong></div>
+                    </div>
+                    {qrIdentityCheck?.ownership_disclaimer && (
+                      <p className="ownership-disclaimer">{qrIdentityCheck.ownership_disclaimer}</p>
+                    )}
+                  </div>
+
+                  {qrTamper?.tamper_detected ? (
+                    <div className={`tamper-alert severity-${qrTamper.severity || "medium"}`}>
+                      <h3>Changes Detected</h3>
+                      <strong>{qrTamper.headline || qrTamper.change_status}</strong>
+                      <p>{qrTamper.explanation || qrTamper.summary}</p>
+                      {qrTamper.changes?.length > 0 && (
+                        <ul className="tamper-changes">
+                          {qrTamper.changes.map((change) => (
+                            <li key={change.field}>
+                              <span>{change.field}</span>
+                              <strong>{change.previous} → {change.current}</strong>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="qr-section">
+                      <h3>Tamper Check</h3>
+                      <p>{qrTamper?.summary || "No previously user-verified QR baseline found for comparison."}</p>
+                    </div>
+                  )}
+
+                  <div className="qr-section">
+                    <h3>Recommendation</h3>
+                    <p>
+                      {qrTamper?.tamper_detected
+                        ? "This QR differs from your verified baseline. Confirm payee details inside your UPI app before paying."
+                        : displayResult?.qr_analysis?.recipient_reputation === "Unknown"
+                          ? "Recipient is unknown. Verify payee identity in your UPI app before approving payment."
+                          : "Verify recipient, amount, and purpose inside your UPI app before paying."}
+                    </p>
+                    {displayResult?.qr_analysis?.risk_signals?.length > 0 && (
+                      <p className="risk-signals">Risk signals: {displayResult.qr_analysis.risk_signals.join("; ")}</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="intel-list">
+                  <div><span>Recipient</span><strong>{displayResult?.qr_analysis?.upi_id || "Not found"}</strong></div>
+                  <div><span>Merchant</span><strong>{displayResult?.qr_analysis?.merchant || "Not found"}</strong></div>
+                  <div><span>Amount</span><strong>{displayResult?.qr_analysis?.amount || "Not found"}</strong></div>
+                  <div><span>Payment Note</span><strong>{displayResult?.qr_analysis?.note || "Not found"}</strong></div>
+                  <div><span>Destination URL</span><strong>{displayResult?.qr_analysis?.destination_url || "Not found"}</strong></div>
+                  <div><span>Voice emotion</span><strong>{displayResult?.call_analysis?.emotion || "Not analyzed"}</strong></div>
+                  <div><span>Pressure score</span><strong>{displayResult?.call_analysis?.pressure_score ?? 0}%</strong></div>
+                  <div><span>Live warning</span><strong>{displayResult?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>
+                </div>
+              )}
             </div>
           </section>
 
