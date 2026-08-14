@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
+import { buildMetricDisplay } from "./displayMetrics.mjs";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost" ? "http://127.0.0.1:8000" : "");
 const LANDING_DURATION_MS = 5200;
@@ -740,21 +741,16 @@ export default function App() {
   const isQrResult = displayResult?.mode === "qr" || Boolean(displayResult?.qr_analysis);
   const isQrPanel = mode === "qr" || activeAnalysisMode === "qr" || isQrResult;
   const isAnalyzingCurrentMode = loading && activeAnalysisMode === mode;
-  const score = Number.isFinite(Number(displayResult?.score)) ? Number(displayResult.score) : 0;
-  const scoreDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult ? (Number.isFinite(Number(displayResult.score)) ? `${score}%` : "Unable") : "0%";
-  const confidenceDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult ? (Number.isFinite(Number(displayResult.confidence)) ? `${displayResult.confidence}%` : "Not applicable") : "Not applicable";
-  const ruleScoreDisplay = isAnalyzingCurrentMode
-    ? "Analyzing"
-    : displayResult
-      ? Number.isFinite(Number(displayResult.rule_score)) ? `${displayResult.rule_score}%` : isQrResult ? "Not applicable" : Number.isFinite(Number(displayResult.score)) ? `${Math.max(14, score - 2)}%` : "Not applicable"
-      : "Not applicable";
-  const urlScoreDisplay = isAnalyzingCurrentMode
-    ? "Analyzing"
-    : displayResult
-      ? Number.isFinite(Number(displayResult.url_score)) ? `${displayResult.url_score}%` : displayResult?.url_checks?.length ? `${Math.max(...displayResult.url_checks.map((item) => item.score))}%` : isQrResult ? "Not applicable" : "Not applicable"
-      : "Not applicable";
-  const safetyScore = Number.isFinite(Number(displayResult?.safety_score)) ? Number(displayResult.safety_score) : 76;
-  const safetyScoreDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult ? (Number.isFinite(Number(displayResult.safety_score)) ? displayResult.safety_score : "Not applicable") : "Not applicable";
+  const metricDisplay = buildMetricDisplay({ displayResult, mode, activeAnalysisMode, loading });
+  const score = metricDisplay.scoreValue ?? 0;
+  const gaugeScore = metricDisplay.gaugeScore;
+  const scoreDisplay = metricDisplay.scoreDisplay;
+  const confidenceDisplay = metricDisplay.confidenceDisplay;
+  const ruleScoreDisplay = metricDisplay.ruleScoreDisplay;
+  const urlScoreDisplay = metricDisplay.urlScoreDisplay;
+  const dashboardSafetyScore = Number.isFinite(Number(displayResult?.safety_score)) ? Number(displayResult.safety_score) : 76;
+  const safetyScoreDisplay = metricDisplay.safetyScoreDisplay;
+  const liveShieldStatus = metricDisplay.liveShieldStatus;
   const threatCardTitle = isQrPanel ? "QR Risk Analysis" : "Threat Level";
   const riskLevelDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult?.risk || threatCardTitle;
   const incidentId = useMemo(() => `BS-${Math.floor(20000 + Math.random() * 70000)}`, [result?.created_at]);
@@ -1345,7 +1341,7 @@ export default function App() {
           </header>
 
           <section className={activeSection === "Dashboard" ? "stat-strip" : "stat-strip section-hidden"}>
-            <div><span>Safety Score</span><strong>{safetyScore}</strong><small>Higher is safer</small></div>
+            <div><span>Safety Score</span><strong>{dashboardSafetyScore}</strong><small>Higher is safer</small></div>
             <div><span>Threats Detected</span><strong>{Math.max(caseCounts.suspected + caseCounts.review, history.filter((item) => (item.score || 0) >= 55).length)}</strong><small>From this workspace</small></div>
             <div><span>Reports Ready</span><strong>{cases.length}</strong><small>Security cases</small></div>
             <div><span>Latest Alert</span><strong>Digital Arrest</strong><small>Awareness item</small></div>
@@ -1554,7 +1550,7 @@ export default function App() {
                 <div className="orbit-core">
                   <HeroShield />
                   <strong>Live Shield</strong>
-                  <span>{displayResult || isAnalyzingCurrentMode ? `${scoreDisplay} threat detected` : "Monitoring"}</span>
+                  <span>{liveShieldStatus}</span>
                 </div>
                 <i className="orbit-dot one" />
                 <i className="orbit-dot two" />
@@ -1563,7 +1559,7 @@ export default function App() {
 
               <section className="glass result-focus">
                 <h2>{threatCardTitle}</h2>
-                <div className={`gauge ${riskColor(score)}`} style={{ "--score": score || 18 }}>
+                <div className={`gauge ${riskColor(score)}`} style={{ "--score": gaugeScore }}>
                   <div className="gauge-core">
                     <strong>{scoreDisplay}</strong>
                     <span>{riskLevelDisplay}</span>
