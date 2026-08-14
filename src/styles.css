@@ -273,7 +273,8 @@ button:disabled {
 }
 
 .landing-copy {
-  max-width: 680px;
+  max-width: min(760px, 100%);
+  overflow: visible;
 }
 
 .landing-copy p {
@@ -288,18 +289,21 @@ button:disabled {
 .landing-title {
   margin: 0;
   color: #ffffff;
-  font-size: clamp(3rem, 7.2vw, 7.4rem);
+  font-size: clamp(2.8rem, 6.4vw, 6.6rem);
   font-weight: 900;
   letter-spacing: 0;
-  line-height: 0.9;
+  line-height: 1;
   text-shadow: 0 22px 46px rgba(0, 0, 0, 0.32);
 }
 
 .landing-copy h1 {
+  display: inline-block;
+  padding-right: 0.14em;
   background: linear-gradient(90deg, #ffffff, #f2a33b 58%, #34c76a);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .landing-copy > span {
@@ -2292,7 +2296,8 @@ mark.danger {
   }
 
   .landing-copy h1 {
-    font-size: clamp(2.8rem, 15vw, 4.7rem);
+    font-size: clamp(2.4rem, 12vw, 4.4rem);
+    padding-right: 0.12em;
   }
 
   .landing-actions button {

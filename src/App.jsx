@@ -558,7 +558,7 @@ const landingSignals = [
   { type: "UPI", text: "refund-support@upi" },
 ];
 
-function CinematicLanding({ onScan, onExplore }) {
+function CinematicLanding() {
   return (
     <section className="landing-screen cinematic-landing">
       <div className="landing-mesh" aria-hidden="true" />
@@ -609,13 +609,8 @@ function CinematicLanding({ onScan, onExplore }) {
       </div>
 
       <div className="landing-copy">
-        <p>AI Cyber Safety Layer</p>
         <h1>BharatSHIELD</h1>
         <span>Protect every link, QR code, message, and payment before it becomes a threat.</span>
-        <div className="landing-actions">
-          <button type="button" className="primary" onClick={onScan}>Scan a Threat</button>
-          <button type="button" onClick={onExplore}>Explore Protection</button>
-        </div>
       </div>
 
       <div className="landing-status">
@@ -1187,28 +1182,7 @@ export default function App() {
 
   return (
     <>
-      {showLanding && (
-        <CinematicLanding
-          onScan={() => {
-            setShowLanding(false);
-            if (session) {
-              setShowAuth(false);
-              setActiveSection("Scan");
-            } else {
-              setShowAuth(true);
-            }
-          }}
-          onExplore={() => {
-            setShowLanding(false);
-            if (session) {
-              setShowAuth(false);
-              setActiveSection("Guardian");
-            } else {
-              setShowAuth(true);
-            }
-          }}
-        />
-      )}
+      {showLanding && <CinematicLanding />}
 
       {!showLanding && showAuth && (
         <section className="auth-screen">
