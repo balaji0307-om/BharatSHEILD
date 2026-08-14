@@ -1,8 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 import { buildMetricDisplay } from "./displayMetrics.mjs";
+import { buildLocalQrAnalysisResult } from "./qrAnalysis.mjs";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost" ? "http://127.0.0.1:8000" : "");
+function resolveApiBase() {
+  const configured = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "");
+  if (configured) return configured;
+  if (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") {
+    return "http://127.0.0.1:8000";
+  }
+  if (window.location.hostname.endsWith(".onrender.com")) {
+    return window.location.origin;
+  }
+  return "";
+}
+
+const API_BASE = resolveApiBase();
 const LANDING_DURATION_MS = 5200;
 
 const samples = {
@@ -320,76 +333,62 @@ function highlightedText(text) {
   return { __html: html };
 }
 
-function parseQrPayload(text) {
+function qrUnableToVerifyAnalysis(text) {
+  let qrPayload = {
+    upi_id: "Not found",
+    merchant: "Not found",
+    amount: "Not found",
+    note: "Not found",
+    destination_url: "Not found",
+    hidden_redirect: false,
+    fingerprint: "BS-QR-UNVERIFIED",
+    recipient_reputation: "Unknown",
+    previous_reports: 0,
+    risk_signals: [],
+  };
   try {
     const url = new URL(text.trim());
-    const params = url.searchParams;
-    const upiId = params.get("pa") || "";
-    const merchant = params.get("pn") || "";
-    const amount = params.get("am") || "";
-    const note = params.get("tn") || "";
-    const [, upiHandle = ""] = upiId.split("@");
-    const normalized = [url.protocol.replace(":", ""), upiId, merchant, amount, note, url.host, url.pathname]
-      .join("|")
-      .toLowerCase();
-    let hash = 0;
-    for (let index = 0; index < normalized.length; index += 1) {
-      hash = ((hash << 5) - hash + normalized.charCodeAt(index)) >>> 0;
-    }
-    const fingerprint = `BS-QR-${hash.toString(16).toUpperCase().padStart(8, "0").slice(0, 8)}`;
-    const suspiciousTerms = /fake|refund|support|verify|kyc|helpdesk|customer/i;
-    const previousReports = countLocalPayeeReports(upiId);
-    const handleUnusual = Boolean(upiHandle) && (!/^[a-z][a-z0-9._-]{2,}$/i.test(upiHandle) || suspiciousTerms.test(upiHandle));
-    const riskSignals = [];
-    if (suspiciousTerms.test(upiId)) riskSignals.push("Recipient name contains support/refund/KYC terms");
-    if (handleUnusual) riskSignals.push("UPI provider handle is malformed or unusual");
-    if (/refund|support|kyc|verify|fee|urgent|blocked|otp|pin/i.test(notes)) riskSignals.push("Payment note contains pressure or verification terms");
-    if (/refund|support|kyc|verification|bank|helpdesk/i.test(merchant)) riskSignals.push("Merchant name uses refund/support/KYC terms");
-    if (previousReports) riskSignals.push(`Matched ${previousReports} previous BharatSHIELD case(s)`);
-    const recipientSuspicious = Boolean(previousReports || suspiciousTerms.test(upiId) || handleUnusual);
-    return {
-      upi_id: upiId || "Not found",
-      merchant: merchant || "Not found",
-      amount: amount || "Not found",
-      note: note || "Not found",
+    qrPayload = {
+      ...qrPayload,
+      upi_id: url.searchParams.get("pa") || "Not found",
+      merchant: url.searchParams.get("pn") || "Not found",
+      amount: url.searchParams.get("am") || "Not found",
+      note: url.searchParams.get("tn") || "Not found",
       destination_url: url.protocol === "http:" || url.protocol === "https:" ? text.trim() : "Not found",
       hidden_redirect: url.protocol === "http:" || url.protocol === "https:",
-      fingerprint,
-      recipient_reputation: recipientSuspicious ? "Suspicious" : riskSignals.length ? "Review" : upiId ? "Unknown" : "Not applicable",
-      previous_reports: previousReports,
-      risk_signals: riskSignals,
     };
   } catch {
-    return {
-      upi_id: text.toLowerCase().includes("upi") ? "Detected in payload" : "Not found",
-      merchant: "Not found",
-      amount: "Not found",
-      note: "Not found",
-      destination_url: /^https?:\/\//i.test(text) ? text : "Not found",
-      hidden_redirect: /^https?:\/\//i.test(text),
-      fingerprint: "BS-QR-UNVERIFIED",
-      recipient_reputation: "Unknown",
-      previous_reports: 0,
-      name_mismatch: false,
-      risk_signals: [],
-    };
+    // Keep minimal unverified payload fields.
   }
-}
-
-function countLocalPayeeReports(upiId) {
-  try {
-    const cases = JSON.parse(localStorage.getItem("bharatshield_cases") || "[]");
-    const upiKey = (upiId || "").trim().toLowerCase();
-    if (!upiKey) return 0;
-    return cases.filter((item) => {
-      const qrUpi = String(item.ai_result?.qr_analysis?.upi_id || "").trim().toLowerCase();
-      if (qrUpi && qrUpi === upiKey) return true;
-      const input = String(item.input || "").trim().toLowerCase();
-      return input.startsWith("upi://") && input.includes(`pa=${upiKey}`);
-    }).length;
-  } catch {
-    return 0;
-  }
+  return {
+    score: null,
+    risk: "Unable to verify",
+    scam_type: "QR Verification Unavailable",
+    confidence: null,
+    rule_score: null,
+    url_score: null,
+    safety_score: null,
+    verification_failed: true,
+    mode: "qr",
+    signals: [{ label: "QR verification", reason: "Backend QR verification was unavailable." }],
+    recommendations: [
+      "Unable to verify this QR. Do not make the payment yet.",
+      "Open your UPI app yourself and verify recipient, merchant, amount, and purpose.",
+      "Do not approve payment if the sender is pressuring you.",
+    ],
+    reason_breakdown: [
+      { label: "Message language", score: 0, why: "Backend verification was unavailable." },
+      { label: "Urgency and pressure", score: 0, why: "Do not continue if the sender is creating urgency." },
+      { label: "Credential risk", score: 0, why: "Never share OTP, PIN, or password." },
+      { label: "URL / QR risk", score: 45, why: "QR payload is unverified. Payment should not continue yet." },
+    ],
+    url_checks: qrPayload.hidden_redirect ? [{ domain: qrPayload.destination_url, score: 45, checks: [{ label: "Status", result: "Unverified QR destination" }] }] : [],
+    qr_analysis: qrPayload,
+    call_analysis: { emotion: "Not analyzed", pressure_score: 0, live_warning: false },
+    what_we_found: `QR payload decoded for recipient ${qrPayload.upi_id}, merchant ${qrPayload.merchant}, amount ${qrPayload.amount}, note ${qrPayload.note}.`,
+    why_dangerous: "Unable to verify this QR. Do not make the payment yet.",
+    how_sure: "55% confidence because only local QR parsing completed.",
+  };
 }
 
 function makeGuardianOtp(mobile) {
@@ -470,22 +469,9 @@ function clientAnalysis(text, channel) {
     ["http", 18, "External link"],
   ];
   const hits = checks.filter(([term]) => lowered.includes(term));
-  const qrPayload = channel === "qr" ? parseQrPayload(text) : null;
-  const qrTerms = qrPayload ? [qrPayload.upi_id, qrPayload.merchant, qrPayload.amount, qrPayload.note].join(" ").toLowerCase() : "";
-  const qrRiskBoost = qrPayload
-    ? (/refund|support|kyc|verify|fee|urgent|blocked|otp|pin/i.test(qrTerms) ? 24 : 0)
-      + (Number.parseFloat(qrPayload.amount) >= 1000 ? 10 : 0)
-      + (Number.parseFloat(qrPayload.amount) >= 5000 ? 6 : 0)
-      + (qrPayload.hidden_redirect ? 18 : 0)
-      + (qrPayload.previous_reports ? Math.min(30, 12 + qrPayload.previous_reports * 6) : 0)
-      + ((qrPayload.risk_signals || []).some((signal) => /recipient|handle|format/i.test(signal)) ? 20 : 0)
-    : 0;
-  const score = Math.min(96, 12 + hits.reduce((sum, [, weight]) => sum + weight, 0) + (channel === "url" ? 8 : 0) + qrRiskBoost);
-  const scamType = channel === "qr" && qrPayload?.upi_id !== "Not found" ? (score >= 55 ? "UPI QR Fraud Risk" : "UPI QR Review") : lowered.includes("job") || lowered.includes("hiring") ? "Fake Job" : lowered.includes("investment") || lowered.includes("double your money") ? "Investment Scam" : lowered.includes("http") || channel === "url" ? "Phishing" : "Suspicious Message";
-  const signals = [
-    ...hits.map(([term, , label]) => ({ label, reason: `${term} found in the content` })),
-    ...(qrPayload?.risk_signals || []).map((signal) => ({ label: "QR payment", reason: signal })),
-  ];
+  const score = Math.min(96, 12 + hits.reduce((sum, [, weight]) => sum + weight, 0) + (channel === "url" ? 8 : 0));
+  const scamType = lowered.includes("job") || lowered.includes("hiring") ? "Fake Job" : lowered.includes("investment") || lowered.includes("double your money") ? "Investment Scam" : lowered.includes("http") || channel === "url" ? "Phishing" : "Suspicious Message";
+  const signals = hits.map(([term, , label]) => ({ label, reason: `${term} found in the content` }));
   return {
     score,
     risk: score >= 75 ? "Critical" : score >= 55 ? "High" : score >= 30 ? "Medium" : "Low",
@@ -504,51 +490,14 @@ function clientAnalysis(text, channel) {
       { label: "Message language", score: Math.min(90, hits.length * 16), why: hits.length ? "Risk words found in the content." : "No major risk words found." },
       { label: "Urgency and pressure", score: lowered.includes("urgent") || lowered.includes("blocked") ? 82 : 16, why: "Pressure language is reviewed." },
       { label: "Credential risk", score: lowered.includes("otp") || lowered.includes("pin") || lowered.includes("password") ? 92 : 12, why: "Checks for OTP, PIN, and password requests." },
-      { label: "URL / QR risk", score: lowered.includes("http") || channel === "qr" || channel === "url" ? 84 : 8, why: "Links and QR payloads are reviewed." },
+      { label: "URL / QR risk", score: lowered.includes("http") || channel === "url" ? 84 : 8, why: "Links and QR payloads are reviewed." },
     ],
     url_checks: lowered.includes("http") || channel === "url" ? [{ domain: text.replace(/^https?:\/\//, "").split(/[/?#]/)[0] || "Link", score: Math.min(95, score + 5), checks: [{ label: "Status", result: "Review carefully" }] }] : [],
-    qr_analysis: qrPayload || { upi_id: "Not found", merchant: "Not found", amount: "Not found", note: "Not found" },
+    qr_analysis: null,
     call_analysis: { emotion: lowered.includes("blocked") ? "Pressure detected" : "Not analyzed", pressure_score: lowered.includes("urgent") || lowered.includes("blocked") ? 82 : 18, live_warning: score >= 70 },
-    what_we_found: qrPayload
-      ? `QR review for recipient ${qrPayload.upi_id}, merchant ${qrPayload.merchant}, amount ${qrPayload.amount}, note ${qrPayload.note}.`
-      : hits.length ? `Found ${hits.length} risk signals in this content.` : "No major scam signal found in this content.",
-    why_dangerous: qrPayload
-      ? "Backend verification was unavailable. Treat this QR as unverified and confirm recipient, amount, and purpose before payment."
-      : score >= 55 ? "This content may push the user toward a risky action such as clicking a link or sharing private details." : "The content does not show strong scam indicators, but verify before acting.",
+    what_we_found: hits.length ? `Found ${hits.length} risk signals in this content.` : "No major scam signal found in this content.",
+    why_dangerous: score >= 55 ? "This content may push the user toward a risky action such as clicking a link or sharing private details." : "The content does not show strong scam indicators, but verify before acting.",
     how_sure: `${Math.min(98, score + 4)}% confidence based on visible content checks.`,
-  };
-}
-
-function qrUnableToVerifyAnalysis(text) {
-  const qrPayload = parseQrPayload(text);
-  return {
-    score: null,
-    risk: "Unable to verify",
-    scam_type: "QR Verification Unavailable",
-    confidence: null,
-    rule_score: null,
-    url_score: null,
-    safety_score: null,
-    verification_failed: true,
-    mode: "qr",
-    signals: [{ label: "QR verification", reason: "Backend QR verification was unavailable." }],
-    recommendations: [
-      "Unable to verify this QR. Do not make the payment yet.",
-      "Open your UPI app yourself and verify recipient, merchant, amount, and purpose.",
-      "Do not approve payment if the sender is pressuring you.",
-    ],
-    reason_breakdown: [
-      { label: "Message language", score: 0, why: "Backend verification was unavailable." },
-      { label: "Urgency and pressure", score: 0, why: "Do not continue if the sender is creating urgency." },
-      { label: "Credential risk", score: 0, why: "Never share OTP, PIN, or password." },
-      { label: "URL / QR risk", score: 45, why: "QR payload is unverified. Payment should not continue yet." },
-    ],
-    url_checks: qrPayload.hidden_redirect ? [{ domain: qrPayload.destination_url, score: 45, checks: [{ label: "Status", result: "Unverified QR destination" }] }] : [],
-    qr_analysis: qrPayload,
-    call_analysis: { emotion: "Not analyzed", pressure_score: 0, live_warning: false },
-    what_we_found: `QR payload decoded for recipient ${qrPayload.upi_id}, merchant ${qrPayload.merchant}, amount ${qrPayload.amount}, note ${qrPayload.note}.`,
-    why_dangerous: "Unable to verify this QR. Do not make the payment yet.",
-    how_sure: "55% confidence because only local QR parsing completed.",
   };
 }
 
@@ -847,7 +796,21 @@ export default function App() {
       saveCases(nextCases);
       saveBackendCase(nextCases[0], session?.token).catch(() => {});
     } catch (err) {
-      const fallback = { ...(channel === "qr" ? qrUnableToVerifyAnalysis(input) : clientAnalysis(input, channel)), mode: channel };
+      let fallback;
+      let errorMessage = "";
+      if (channel === "qr") {
+        try {
+          fallback = { ...(await buildLocalQrAnalysisResult(input)), mode: channel };
+          if (API_BASE) {
+            errorMessage = "Backend unavailable. Local QR review completed — verify payee in your UPI app before paying.";
+          }
+        } catch {
+          fallback = { ...qrUnableToVerifyAnalysis(input), mode: channel };
+          errorMessage = "Unable to verify this QR. Do not make the payment yet.";
+        }
+      } else {
+        fallback = { ...clientAnalysis(input, channel), mode: channel };
+      }
       setResult(fallback);
       const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
       const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
@@ -856,7 +819,7 @@ export default function App() {
       setCases(nextCases);
       saveCases(nextCases);
       saveBackendCase(nextCases[0], session?.token).catch(() => {});
-      setError(channel === "qr" ? "Unable to verify this QR. Do not make the payment yet." : "");
+      setError(errorMessage);
     } finally {
       setTimeout(() => {
         setLoading(false);

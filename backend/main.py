@@ -28,6 +28,11 @@ except Exception:  # pragma: no cover - deployment installs reportlab, fallback 
     SimpleDocTemplate = None
     Spacer = None
 
+try:
+    from fastapi.staticfiles import StaticFiles
+except Exception:  # pragma: no cover
+    StaticFiles = None
+
 
 app = FastAPI(title="BharatSHIELD")
 
@@ -175,7 +180,8 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    if request.url.path.startswith("/api/"):
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
@@ -987,3 +993,8 @@ def url_check(request: UrlCheckRequest) -> dict[str, Any]:
     result = inspect_url(request.url)
     result["risk"] = "High" if result["score"] >= 55 else "Medium" if result["score"] >= 30 else "Low"
     return result
+
+
+DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
+if StaticFiles and DIST_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(DIST_DIR), html=True), name="frontend")
