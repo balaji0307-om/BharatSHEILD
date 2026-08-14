@@ -762,6 +762,26 @@ export default function App() {
     setActiveAnalysisMode("");
   }
 
+  async function analyzeQrPayload(input) {
+    if (API_BASE) {
+      try {
+        const response = await fetch(`${API_BASE}/api/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: input, channel: "qr", language: "en" }),
+        });
+        const contentType = response.headers.get("content-type") || "";
+        if (response.ok && contentType.includes("application/json")) {
+          const data = await response.json();
+          if (data?.qr_analysis) return { ...data, mode: "qr" };
+        }
+      } catch {
+        // Use local deterministic QR review when backend is unavailable.
+      }
+    }
+    return { ...(await buildLocalQrAnalysisResult(input)), mode: "qr" };
+  }
+
   async function runAnalysis(input = content, channel = mode) {
     if (!input.trim()) {
       setError(channel === "qr" ? "Upload a QR image or paste decoded QR content first." : "Paste content first.");
@@ -775,13 +795,18 @@ export default function App() {
     setContent(input);
     setShowLanding(false);
     try {
-      const response = await fetch(`${API_BASE}/api/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: input, channel, language: "en" }),
-      });
-      if (!response.ok) throw new Error("Service is unavailable. Please try again.");
-      const data = { ...(await response.json()), mode: channel };
+      let data;
+      if (channel === "qr") {
+        data = await analyzeQrPayload(input);
+      } else {
+        const response = await fetch(`${API_BASE}/api/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: input, channel, language: "en" }),
+        });
+        if (!response.ok) throw new Error("Service is unavailable. Please try again.");
+        data = { ...(await response.json()), mode: channel };
+      }
       setResult(data);
       const nextHistory = [{ ...data, mode: channel, preview: input.slice(0, 120) }, ...history];
       const nextCases = [buildSecurityCase(data, input, channel, session?.user), ...cases];
@@ -791,30 +816,41 @@ export default function App() {
       saveCases(nextCases);
       saveBackendCase(nextCases[0], session?.token).catch(() => {});
     } catch (err) {
-      let fallback;
-      let errorMessage = "";
       if (channel === "qr") {
         try {
-          fallback = { ...(await buildLocalQrAnalysisResult(input)), mode: channel };
-          if (API_BASE) {
-            errorMessage = "Backend unavailable. Local QR review completed — verify payee in your UPI app before paying.";
-          }
+          const fallback = { ...(await buildLocalQrAnalysisResult(input)), mode: channel };
+          setResult(fallback);
+          const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
+          const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
+          setHistory(nextHistory);
+          saveHistory(nextHistory);
+          setCases(nextCases);
+          saveCases(nextCases);
+          saveBackendCase(nextCases[0], session?.token).catch(() => {});
+          setError("");
         } catch {
-          fallback = { ...qrUnableToVerifyAnalysis(input), mode: channel };
-          errorMessage = "Unable to verify this QR. Do not make the payment yet.";
+          const fallback = { ...qrUnableToVerifyAnalysis(input), mode: channel };
+          setResult(fallback);
+          const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
+          const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
+          setHistory(nextHistory);
+          saveHistory(nextHistory);
+          setCases(nextCases);
+          saveCases(nextCases);
+          saveBackendCase(nextCases[0], session?.token).catch(() => {});
+          setError("Unable to verify this QR. Do not make the payment yet.");
         }
       } else {
-        fallback = { ...clientAnalysis(input, channel), mode: channel };
+        const fallback = { ...clientAnalysis(input, channel), mode: channel };
+        setResult(fallback);
+        const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
+        const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
+        setHistory(nextHistory);
+        saveHistory(nextHistory);
+        setCases(nextCases);
+        saveCases(nextCases);
+        saveBackendCase(nextCases[0], session?.token).catch(() => {});
       }
-      setResult(fallback);
-      const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
-      const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
-      setHistory(nextHistory);
-      saveHistory(nextHistory);
-      setCases(nextCases);
-      saveCases(nextCases);
-      saveBackendCase(nextCases[0], session?.token).catch(() => {});
-      setError(errorMessage);
     } finally {
       setTimeout(() => {
         setLoading(false);

@@ -257,7 +257,7 @@ export async function buildLocalQrAnalysisResult(text) {
 
   const score = qrAnalysis.score;
   const risk = score >= 75 ? "Critical" : score >= 55 ? "High" : score >= 30 ? "Medium" : "Low";
-  const confidence = clamp(Math.max(55, Math.min(98, score + 12)));
+  const confidence = score === 0 ? 62 : clamp(Math.max(55, Math.min(98, score + 12)));
   const signals = qrAnalysis.risk_signals.map((reason) => ({ label: "QR payment", reason }));
 
   return {

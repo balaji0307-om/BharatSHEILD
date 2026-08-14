@@ -897,17 +897,47 @@ def case_report_pdf(case_id: str, request: Request) -> Response:
 
 @app.post("/api/analyze")
 async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
-    rules = rule_analysis(request.content, request.channel)
-    url_checks = [inspect_url(url) for url in rules["urls"][:3]]
-    qr_analysis = inspect_qr_payload(request.content) if request.channel == "qr" or request.content.lower().startswith("upi://") else None
-    if url_checks:
-        rules["score"] = clamp(max(rules["score"], max(item["score"] for item in url_checks)))
-    if qr_analysis:
-        rules["score"] = clamp(max(rules["score"], qr_analysis["score"]))
-        for signal in qr_analysis.get("risk_signals", [])[:6]:
-            rules["signals"].append({"label": "QR payment", "reason": signal})
-        if qr_analysis.get("upi_id") != "Not found":
-            rules["scam_type"] = "UPI QR Review" if qr_analysis["score"] < 55 else "UPI QR Fraud Risk"
+    is_qr = request.channel == "qr" or request.content.lower().startswith("upi://")
+
+    if is_qr:
+        qr_analysis = inspect_qr_payload(request.content)
+        score = qr_analysis["score"]
+        signals = [{"label": "QR payment", "reason": signal} for signal in qr_analysis.get("risk_signals", [])[:6]]
+        url_checks: list[dict[str, Any]] = []
+        destination = qr_analysis.get("destination_url")
+        if qr_analysis.get("hidden_redirect") and destination not in {"", "Not found"}:
+            url_check = inspect_url(destination)
+            url_checks = [url_check]
+            score = clamp(max(score, url_check["score"]))
+        scam_type = "UPI QR Review" if score < 55 else "UPI QR Fraud Risk"
+        recommendations = [
+            "Verify recipient, merchant, amount, and purpose inside your UPI app before paying.",
+            "Never share OTP, UPI PIN, passwords, or card details.",
+            "Unknown recipient is not verified safe. Confirm payee identity before payment.",
+        ]
+        breakdown = {
+            "language": 0,
+            "urgency": 82 if any(term in (qr_analysis.get("note") or "").lower() for term in PRESSURE_TERMS) else 16,
+            "emotional_manipulation": 0,
+            "pressure": 82 if any(term in (qr_analysis.get("note") or "").lower() for term in PRESSURE_TERMS) else 16,
+            "credential_request": 92 if any("OTP/PIN/password" in signal for signal in qr_analysis.get("risk_signals", [])) else 12,
+        }
+        call_analysis = {"emotion": "Not analyzed", "pressure_score": breakdown["pressure"], "otp_demand": False, "live_warning": score >= 70}
+        rules = {
+            "score": score,
+            "scam_type": scam_type,
+            "signals": signals,
+            "recommendations": recommendations,
+            "urls": [],
+            "breakdown": breakdown,
+            "call_analysis": call_analysis,
+        }
+    else:
+        rules = rule_analysis(request.content, request.channel)
+        qr_analysis = None
+        url_checks = [inspect_url(url) for url in rules["urls"][:3]]
+        if url_checks:
+            rules["score"] = clamp(max(rules["score"], max(item["score"] for item in url_checks)))
 
     gemini = await gemini_analysis(request.content, rules, request.language)
     score = rules["score"]
@@ -935,13 +965,13 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         else:
             why_dangerous = "Recipient reputation is unknown. Verify the payee inside your UPI app before paying."
 
-    confidence = clamp(max(55, min(98, score + 12)))
+    confidence = 62 if is_qr and score == 0 else clamp(max(55, min(98, score + 12)))
     safety_score = 100 - score
     rule_score = qr_analysis["score"] if qr_analysis else rules["score"]
-    url_score = max([item["score"] for item in url_checks], default=None)
+    url_score = max([item["score"] for item in url_checks], default=None) if url_checks else None
     reason_breakdown = [
-        {"label": "Message language", "score": rules["breakdown"]["language"], "why": "Checks risky words, fake reward claims, fear tactics, and credential requests."},
-        {"label": "Urgency and pressure", "score": rules["breakdown"]["pressure"], "why": "Measures panic, time pressure, threats, and emotional manipulation."},
+        {"label": "Message language", "score": rules["breakdown"]["language"], "why": "Checks risky words, fake reward claims, fear tactics, and credential requests." if not is_qr else "QR payload language is reviewed separately from SMS-style keyword rules."},
+        {"label": "Urgency and pressure", "score": rules["breakdown"]["pressure"], "why": "Measures panic, time pressure, threats, and emotional manipulation." if not is_qr else "Payment note pressure terms are reviewed."},
         {"label": "Credential risk", "score": rules["breakdown"]["credential_request"], "why": "Looks for OTP, PIN, password, and verification-code requests."},
         {"label": "URL / QR risk", "score": max([item["score"] for item in url_checks] + ([qr_analysis["score"]] if qr_analysis else [0])), "why": "Inspects link structure, brand impersonation, UPI payloads, and suspicious destinations."},
     ]
