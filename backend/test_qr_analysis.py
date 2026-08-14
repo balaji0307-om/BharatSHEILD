@@ -20,23 +20,26 @@ class QRAnalysisTests(unittest.TestCase):
         except PermissionError:
             pass
 
-    def test_numeric_upi_id_is_not_suspicious_by_itself(self):
+    def test_case_a_numeric_upi_is_not_suspicious_by_itself(self):
         result = main.inspect_qr_payload("upi://pay?pa=9876543210@upi&pn=Rahul&am=200&tn=Lunch")
 
         self.assertEqual(result["upi_id"], "9876543210@upi")
+        self.assertEqual(result["merchant"], "Rahul")
+        self.assertEqual(result["amount"], "200")
+        self.assertEqual(result["note"], "Lunch")
         self.assertIn(result["recipient_reputation"], {"Unknown", "Review"})
         self.assertNotEqual(result["recipient_reputation"], "Suspicious")
         self.assertFalse(any("mobile-number" in signal.lower() for signal in result["risk_signals"]))
         self.assertLess(result["score"], 45)
 
-    def test_payment_pressure_note_raises_risk(self):
+    def test_case_b_kyc_note_raises_risk(self):
         safe = main.inspect_qr_payload("upi://pay?pa=9876543210@upi&pn=Rahul&am=200&tn=Lunch")
         risky = main.inspect_qr_payload("upi://pay?pa=9876543210@upi&pn=Rahul&am=200&tn=KYC verification")
 
         self.assertGreater(risky["score"], safe["score"])
         self.assertIn("Payment note contains pressure or verification terms", risky["risk_signals"])
 
-    def test_refund_support_payload_is_high_risk(self):
+    def test_case_c_refund_support_payload_is_high_risk(self):
         result = main.inspect_qr_payload(
             "upi://pay?pa=refund-support@upi&pn=Refund Support&am=4999&tn=Urgent refund verification"
         )
@@ -47,7 +50,7 @@ class QRAnalysisTests(unittest.TestCase):
         self.assertIn("Merchant name uses refund/support/KYC terms", result["risk_signals"])
         self.assertIn("Payment note contains pressure or verification terms", result["risk_signals"])
 
-    def test_changed_recipient_is_reflected_without_old_recipient_signal(self):
+    def test_case_d_changed_recipient_updates_report(self):
         result = main.inspect_qr_payload(
             "upi://pay?pa=someoneelse@upi&pn=Refund Support&am=4999&tn=Urgent refund verification"
         )
@@ -58,7 +61,7 @@ class QRAnalysisTests(unittest.TestCase):
         self.assertIn("Merchant name uses refund/support/KYC terms", result["risk_signals"])
         self.assertIn("Payment note contains pressure or verification terms", result["risk_signals"])
 
-    def test_same_qr_second_scan_shows_previous_report(self):
+    def test_case_e_same_qr_second_scan_shows_previous_report(self):
         payload = "upi://pay?pa=refund-support@upi&pn=Refund Support&am=4999&tn=Urgent refund verification"
         first = main.inspect_qr_payload(payload)
         main.save_security_case(
@@ -94,6 +97,11 @@ class QRAnalysisTests(unittest.TestCase):
         self.assertIn("Recipient name contains support/refund/KYC terms", third["risk_signals"])
         self.assertGreater(third["score"], first["score"])
         self.assertGreater(third["score"], second["score"])
+
+    def test_unknown_recipient_is_not_marked_safe(self):
+        result = main.inspect_qr_payload("upi://pay?pa=9876543210@upi&pn=Rahul&am=200&tn=Lunch")
+        self.assertEqual(result["recipient_reputation"], "Unknown")
+        self.assertNotIn("Safe", result["recipient_reputation"])
 
 
 if __name__ == "__main__":

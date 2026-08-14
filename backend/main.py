@@ -299,21 +299,39 @@ def similarity_hint(domain: str) -> dict[str, Any] | None:
 
 
 def count_previous_payee_reports(upi_id: str, fingerprint: str) -> int:
-    if not upi_id and not fingerprint:
+    if not upi_id:
         return 0
-    upi_key = upi_id.lower()
-    fingerprint_key = fingerprint.lower()
+    upi_key = upi_id.strip().lower()
     count = 0
     with get_db() as conn:
         rows = conn.execute("SELECT payload FROM security_cases").fetchall()
     for row in rows:
         try:
-            payload_text = json.dumps(json.loads(row["payload"])).lower()
+            case = json.loads(row["payload"])
         except Exception:
             continue
-        if (upi_key and upi_key in payload_text) or (fingerprint_key and fingerprint_key in payload_text):
+        qr = (case.get("ai_result") or {}).get("qr_analysis") or case.get("qr_analysis") or {}
+        case_upi = str(qr.get("upi_id") or "").strip().lower()
+        if case_upi and case_upi == upi_key:
+            count += 1
+            continue
+        case_input = str(case.get("input") or "").strip().lower()
+        if case_input.startswith("upi://") and f"pa={upi_key}" in case_input.replace("%40", "@"):
             count += 1
     return count
+
+
+def qr_fingerprint(parsed, upi_id: str, merchant: str, amount: str, notes: str) -> str:
+    normalized = "|".join([
+        parsed.scheme.lower(),
+        upi_id.strip().lower(),
+        merchant.strip().lower(),
+        amount.strip(),
+        notes.strip().lower(),
+        parsed.netloc.lower(),
+        parsed.path.lower(),
+    ])
+    return "BS-QR-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8].upper()
 
 
 def inspect_qr_payload(text: str) -> dict[str, Any]:
@@ -324,20 +342,27 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
     upi_id = qs.get("pa", [""])[0]
     merchant = qs.get("pn", [""])[0]
     notes = qs.get("tn", [""])[0]
-    upi_local, _, upi_handle = upi_id.partition("@")
+    _, _, upi_handle = upi_id.partition("@")
     lowered_payload = " ".join([raw, upi_id, merchant, notes]).lower()
     destination_url = raw if parsed.scheme in {"http", "https"} else ""
-    checks = []
+    fingerprint = qr_fingerprint(parsed, upi_id, merchant, amount, notes)
+    checks: list[dict[str, str]] = []
     risk_signals: list[str] = []
-    score = 8
+    score = 0
+    handle_unusual = False
 
     if parsed.scheme == "upi":
         checks.append({"label": "Payload", "result": "Valid UPI payment intent"})
-        score += 8
     elif parsed.scheme in {"http", "https"}:
         checks.append({"label": "Payload", "result": "Website link inside QR"})
-        score += 18
+        url_inspection = inspect_url(raw)
+        score += url_inspection["score"]
         risk_signals.append("QR opens a website link")
+        checks.append({"label": "Destination URL", "result": destination_url})
+        if url_inspection["score"] >= 45:
+            risk_signals.append("Suspicious destination URL detected")
+        for check in url_inspection.get("checks", [])[:3]:
+            checks.append({"label": f"URL {check['label']}", "result": check["result"]})
     elif raw:
         checks.append({"label": "Payload", "result": "Non-UPI QR content"})
         score += 6
@@ -346,17 +371,12 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         upi_valid = bool(re.match(r"^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z][a-zA-Z0-9.\-_]{2,}$", upi_id))
         checks.append({"label": "Recipient", "result": upi_id})
         checks.append({"label": "UPI format", "result": "Valid structure" if upi_valid else "Invalid or unusual"})
-        score += 2 if upi_valid else 18
         if not upi_valid:
+            score += 18
             risk_signals.append("Recipient UPI format is unusual")
         if any(word in upi_id.lower() for word in SUSPICIOUS_UPI_TERMS):
             score += 24
             risk_signals.append("Recipient name contains support/refund/KYC terms")
-        digits = re.sub(r"\D", "", upi_local)
-        if len(digits) >= 10:
-            checks.append({"label": "Recipient type", "result": "Mobile-number style UPI ID"})
-        elif re.search(r"\d{6,}", upi_id):
-            checks.append({"label": "Recipient type", "result": "Contains numeric identifier"})
         handle_unusual = bool(upi_handle) and (
             not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9.\-_]{2,}", upi_handle)
             or any(word in upi_handle.lower() for word in SUSPICIOUS_UPI_TERMS)
@@ -373,17 +393,15 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         try:
             amount_value = float(amount)
         except ValueError:
-            amount_value = 0
             score += 8
             risk_signals.append("Amount is not a clean number")
-        if amount_value >= 5000:
-            score += 16
-            risk_signals.append("High payment amount")
-        elif amount_value >= 1000:
-            score += 10
-            risk_signals.append("Moderate payment amount")
-        elif amount_value > 0:
-            score += 3
+        else:
+            if amount_value >= 5000:
+                score += 16
+                risk_signals.append("High payment amount")
+            elif amount_value >= 1000:
+                score += 10
+                risk_signals.append("Moderate payment amount")
     else:
         checks.append({"label": "Amount", "result": "Not prefilled"})
 
@@ -392,17 +410,6 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         if any(word in merchant.lower() for word in ("refund", "support", "kyc", "verification", "bank", "helpdesk")):
             score += 20
             risk_signals.append("Merchant name uses refund/support/KYC terms")
-        merchant_tokens = set(re.findall(r"[a-z]{3,}", merchant.lower()))
-        local_tokens = set(re.findall(r"[a-z]{3,}", upi_local.lower()))
-        if upi_id and re.fullmatch(r"\d{8,}", upi_local or "") and re.search(r"[a-zA-Z]{3,}", merchant):
-            checks.append({"label": "Name match", "result": "Cannot match numeric UPI ID with merchant name"})
-        elif merchant_tokens and local_tokens and merchant_tokens.isdisjoint(local_tokens):
-            score += 12
-            checks.append({"label": "Name match", "result": "Merchant name differs from UPI ID text"})
-            risk_signals.append("Merchant name and UPI ID text do not match")
-        elif merchant_tokens and local_tokens:
-            score = max(0, score - 4)
-            checks.append({"label": "Name match", "result": "Merchant name partially matches UPI ID"})
     else:
         checks.append({"label": "Merchant name", "result": "Not provided"})
 
@@ -418,21 +425,12 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         score += 26
         risk_signals.append("QR payload references OTP/PIN/password")
 
-    normalized = "|".join([
-        parsed.scheme.lower(),
-        upi_id.strip().lower(),
-        merchant.strip().lower(),
-        amount.strip(),
-        notes.strip().lower(),
-        parsed.netloc.lower(),
-        parsed.path.lower(),
-    ])
-    fingerprint = "BS-QR-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8].upper()
     previous_reports = count_previous_payee_reports(upi_id, fingerprint)
     if previous_reports:
         score += min(30, 12 + previous_reports * 6)
         risk_signals.append(f"Recipient matched {previous_reports} previous BharatSHIELD case(s)")
     checks.append({"label": "Previous BharatSHIELD reports", "result": str(previous_reports)})
+    checks.append({"label": "QR fingerprint", "result": fingerprint})
 
     if not checks:
         checks.append({"label": "QR content", "result": "No UPI/payment fields detected"})
@@ -441,19 +439,20 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         bool(upi_id)
         and (
             any(word in upi_id.lower() for word in SUSPICIOUS_UPI_TERMS)
-            or bool(upi_handle) and (
-                not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9.\-_]{2,}", upi_handle)
-                or any(word in upi_handle.lower() for word in SUSPICIOUS_UPI_TERMS)
-            )
+            or handle_unusual
         )
     )
-    reputation = "Suspicious" if recipient_specific_suspicion else "Review" if upi_id and risk_signals else "Unknown" if upi_id else "Not applicable"
-    if reputation == "Unknown":
-        checks.append({"label": "Recipient reputation", "result": "Unknown, not verified safe"})
-    elif reputation == "Suspicious":
+    if recipient_specific_suspicion:
+        reputation = "Suspicious"
         checks.append({"label": "Recipient reputation", "result": "Suspicious pattern"})
-    elif reputation == "Review":
+    elif upi_id and risk_signals:
+        reputation = "Review"
         checks.append({"label": "Recipient reputation", "result": "Needs manual verification"})
+    elif upi_id:
+        reputation = "Unknown"
+        checks.append({"label": "Recipient reputation", "result": "Unknown — not verified safe"})
+    else:
+        reputation = "Not applicable"
 
     return {
         "score": clamp(score),
@@ -754,6 +753,7 @@ def case_text(case: dict[str, Any]) -> str:
             f"Destination URL: {qr.get('destination_url') or 'Not found'}",
             f"Recipient Reputation: {qr.get('recipient_reputation') or 'Unknown'}",
             f"Previous BharatSHIELD Reports: {qr.get('previous_reports', 0)}",
+            f"Risk Signals: {', '.join(qr.get('risk_signals') or []) or 'None'}",
         ]
     return "\n".join([
         "BharatSHIELD Security Investigation Report",

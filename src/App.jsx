@@ -328,7 +328,7 @@ function parseQrPayload(text) {
     const merchant = params.get("pn") || "";
     const amount = params.get("am") || "";
     const note = params.get("tn") || "";
-    const [upiLocal = "", upiHandle = ""] = upiId.split("@");
+    const [, upiHandle = ""] = upiId.split("@");
     const normalized = [url.protocol.replace(":", ""), upiId, merchant, amount, note, url.host, url.pathname]
       .join("|")
       .toLowerCase();
@@ -338,17 +338,14 @@ function parseQrPayload(text) {
     }
     const fingerprint = `BS-QR-${hash.toString(16).toUpperCase().padStart(8, "0").slice(0, 8)}`;
     const suspiciousTerms = /fake|refund|support|verify|kyc|helpdesk|customer/i;
-    const previousReports = countLocalPayeeReports(upiId, fingerprint);
+    const previousReports = countLocalPayeeReports(upiId);
     const handleUnusual = Boolean(upiHandle) && (!/^[a-z][a-z0-9._-]{2,}$/i.test(upiHandle) || suspiciousTerms.test(upiHandle));
     const riskSignals = [];
     if (suspiciousTerms.test(upiId)) riskSignals.push("Recipient name contains support/refund/KYC terms");
     if (handleUnusual) riskSignals.push("UPI provider handle is malformed or unusual");
-    if (/refund|support|kyc|verify|fee|urgent|blocked|otp|pin/i.test(`${upiId} ${merchant} ${note}`)) riskSignals.push("Payment text contains pressure terms");
+    if (/refund|support|kyc|verify|fee|urgent|blocked|otp|pin/i.test(notes)) riskSignals.push("Payment note contains pressure or verification terms");
+    if (/refund|support|kyc|verification|bank|helpdesk/i.test(merchant)) riskSignals.push("Merchant name uses refund/support/KYC terms");
     if (previousReports) riskSignals.push(`Matched ${previousReports} previous BharatSHIELD case(s)`);
-    const merchantTokens = new Set((merchant.toLowerCase().match(/[a-z]{3,}/g) || []));
-    const localTokens = new Set((upiLocal.toLowerCase().match(/[a-z]{3,}/g) || []));
-    const nameMismatch = Boolean(merchantTokens.size && localTokens.size && [...merchantTokens].every((token) => !localTokens.has(token)));
-    if (nameMismatch) riskSignals.push("Merchant name and UPI ID do not match");
     const recipientSuspicious = Boolean(previousReports || suspiciousTerms.test(upiId) || handleUnusual);
     return {
       upi_id: upiId || "Not found",
@@ -360,7 +357,6 @@ function parseQrPayload(text) {
       fingerprint,
       recipient_reputation: recipientSuspicious ? "Suspicious" : riskSignals.length ? "Review" : upiId ? "Unknown" : "Not applicable",
       previous_reports: previousReports,
-      name_mismatch: nameMismatch,
       risk_signals: riskSignals,
     };
   } catch {
@@ -380,14 +376,16 @@ function parseQrPayload(text) {
   }
 }
 
-function countLocalPayeeReports(upiId, fingerprint) {
+function countLocalPayeeReports(upiId) {
   try {
     const cases = JSON.parse(localStorage.getItem("bharatshield_cases") || "[]");
-    const upiKey = (upiId || "").toLowerCase();
-    const fingerprintKey = (fingerprint || "").toLowerCase();
+    const upiKey = (upiId || "").trim().toLowerCase();
+    if (!upiKey) return 0;
     return cases.filter((item) => {
-      const blob = JSON.stringify(item).toLowerCase();
-      return (upiKey && blob.includes(upiKey)) || (fingerprintKey && blob.includes(fingerprintKey));
+      const qrUpi = String(item.ai_result?.qr_analysis?.upi_id || "").trim().toLowerCase();
+      if (qrUpi && qrUpi === upiKey) return true;
+      const input = String(item.input || "").trim().toLowerCase();
+      return input.startsWith("upi://") && input.includes(`pa=${upiKey}`);
     }).length;
   } catch {
     return 0;
@@ -475,12 +473,12 @@ function clientAnalysis(text, channel) {
   const qrPayload = channel === "qr" ? parseQrPayload(text) : null;
   const qrTerms = qrPayload ? [qrPayload.upi_id, qrPayload.merchant, qrPayload.amount, qrPayload.note].join(" ").toLowerCase() : "";
   const qrRiskBoost = qrPayload
-    ? 16
-      + (/refund|support|kyc|verify|fee|urgent|blocked|otp|pin/.test(qrTerms) ? 24 : 0)
-      + (Number.parseFloat(qrPayload.amount) >= 1000 ? 10 : Number.parseFloat(qrPayload.amount) > 0 ? 3 : 0)
+    ? (/refund|support|kyc|verify|fee|urgent|blocked|otp|pin/i.test(qrTerms) ? 24 : 0)
+      + (Number.parseFloat(qrPayload.amount) >= 1000 ? 10 : 0)
+      + (Number.parseFloat(qrPayload.amount) >= 5000 ? 6 : 0)
       + (qrPayload.hidden_redirect ? 18 : 0)
-      + (qrPayload.name_mismatch ? 14 : 0)
       + (qrPayload.previous_reports ? Math.min(30, 12 + qrPayload.previous_reports * 6) : 0)
+      + ((qrPayload.risk_signals || []).some((signal) => /recipient|handle|format/i.test(signal)) ? 20 : 0)
     : 0;
   const score = Math.min(96, 12 + hits.reduce((sum, [, weight]) => sum + weight, 0) + (channel === "url" ? 8 : 0) + qrRiskBoost);
   const scamType = channel === "qr" && qrPayload?.upi_id !== "Not found" ? (score >= 55 ? "UPI QR Fraud Risk" : "UPI QR Review") : lowered.includes("job") || lowered.includes("hiring") ? "Fake Job" : lowered.includes("investment") || lowered.includes("double your money") ? "Investment Scam" : lowered.includes("http") || channel === "url" ? "Phishing" : "Suspicious Message";
@@ -1051,6 +1049,19 @@ export default function App() {
   }
 
   function caseReportText(item) {
+    const qr = item.ai_result?.qr_analysis || null;
+    const qrLines = qr ? [
+      "",
+      "QR Analysis:",
+      `QR Fingerprint: ${qr.fingerprint || "Not generated"}`,
+      `Recipient / UPI ID: ${qr.upi_id || "Not found"}`,
+      `Merchant: ${qr.merchant || "Not found"}`,
+      `Amount: ${qr.amount || "Not found"}`,
+      `Payment Note: ${qr.note || "Not found"}`,
+      `Recipient Reputation: ${qr.recipient_reputation || "Unknown"}`,
+      `Previous BharatSHIELD Reports: ${qr.previous_reports ?? 0}`,
+      ...(qr.risk_signals?.length ? ["Risk Signals:", ...qr.risk_signals.map((signal) => `- ${signal}`)] : []),
+    ] : [];
     return [
       "BHARATSHIELD",
       "Security Investigation Report",
@@ -1067,6 +1078,7 @@ export default function App() {
       "",
       "Detection Reasons:",
       ...(item.ai_result.reasons.length ? item.ai_result.reasons : ["No major risk signals found."]).map((reason) => `- ${reason}`),
+      ...qrLines,
       "",
       `Investigation Status: ${item.investigation.status}`,
       `Investigator Note: ${item.investigation.note || "No note added."}`,
@@ -1197,7 +1209,7 @@ export default function App() {
     setProfileOpen(false);
   }
 
-  const recommendations = result?.recommendations || [
+  const recommendations = displayResult?.recommendations || result?.recommendations || [
     "Do not click unknown links or open unexpected attachments.",
     "Never share OTP, UPI PIN, passwords, or card details.",
     "Verify through the official app or website by typing the address yourself.",
@@ -1208,7 +1220,7 @@ export default function App() {
   const isUrlMode = mode === "url";
   const isTextMode = !isQrMode && !isCallMode && !isUrlMode;
   const analyzeLabel = isQrMode ? "Analyze QR" : isCallMode ? "Analyze Call" : isUrlMode ? "Analyze Website" : "Analyze Threat";
-  const complaintSummary = result ? `${result.scam_type} suspected with ${score}% risk. Evidence: ${content.slice(0, 180)}` : "Select a report type and add evidence to prepare a complaint summary.";
+  const complaintSummary = displayResult ? `${displayResult.scam_type} suspected with ${score}% risk. Evidence: ${content.slice(0, 180)}` : "Select a report type and add evidence to prepare a complaint summary.";
 
   return (
     <>
@@ -1517,7 +1529,7 @@ export default function App() {
                     )}
 
                     <div className="toolrow">
-                      <button className="primary" onClick={() => runAnalysis()} disabled={loading}>{loading ? "Scanning..." : analyzeLabel}</button>
+                      <button className="primary" onClick={() => runAnalysis(content, mode)} disabled={loading}>{loading ? "Scanning..." : analyzeLabel}</button>
                       <button onClick={() => setShowReport(true)}>Cyber Report</button>
                     </div>
                     {error && <p className="error">{error}</p>}
@@ -1532,10 +1544,10 @@ export default function App() {
                 </div>
                 <div className="glass">
                   <h2>What We Found</h2>
-                  <p>{result ? result.what_we_found : "Run a scan to review links, urgency, sender intent, and credential risk."}</p>
+                  <p>{displayResult ? displayResult.what_we_found : "Run a scan to review links, urgency, sender intent, and credential risk."}</p>
                   <div className="simple-box">
                     <strong>Why It Is Dangerous</strong>
-                    <p>{result?.why_dangerous || "Verify payment, bank, and account alerts only through official apps."}</p>
+                    <p>{displayResult?.why_dangerous || "Verify payment, bank, and account alerts only through official apps."}</p>
                   </div>
                 </div>
                 <div className="glass">
@@ -1589,7 +1601,7 @@ export default function App() {
             <div className="glass">
               <h2>Reason Breakdown</h2>
               <div className="reason-list">
-                {(result?.reason_breakdown || [
+                {(displayResult?.reason_breakdown || [
                   { label: "Message language", score: 0, why: "Waiting for scan." },
                   { label: "Urgency and pressure", score: 0, why: "Waiting for scan." },
                   { label: "Credential risk", score: 0, why: "Waiting for scan." },
@@ -1607,7 +1619,7 @@ export default function App() {
             <div className="glass">
               <h2>URL Intelligence</h2>
               <div className="intel-list">
-                {(result?.url_checks?.length ? result.url_checks : [{ domain: "No URL scanned", score: 0, checks: [{ label: "Status", result: "Paste or scan a URL to inspect domain reputation." }] }]).flatMap((url) => [
+                {(displayResult?.url_checks?.length ? displayResult.url_checks : [{ domain: "No URL scanned", score: 0, checks: [{ label: "Status", result: "Paste or scan a URL to inspect domain reputation." }] }]).flatMap((url) => [
                   <div key={`${url.domain}-score`}><span>{url.domain}</span><strong>{url.score}% risk</strong></div>,
                   ...(url.checks || []).slice(0, 5).map((check) => <div key={`${url.domain}-${check.label}`}><span>{check.label}</span><strong>{check.result}</strong></div>),
                   url.domain_age ? <div key={`${url.domain}-age`}><span>Domain age</span><strong>{url.domain_age}</strong></div> : null,
@@ -1619,18 +1631,18 @@ export default function App() {
             <div className="glass">
               <h2>QR / Call Deep Check</h2>
               <div className="intel-list">
-                <div><span>UPI ID</span><strong>{result?.qr_analysis?.upi_id || "Not found"}</strong></div>
-                <div><span>Merchant</span><strong>{result?.qr_analysis?.merchant || "Not found"}</strong></div>
-                <div><span>Amount</span><strong>{result?.qr_analysis?.amount || "Not found"}</strong></div>
-                <div><span>Payment note</span><strong>{result?.qr_analysis?.note || "Not found"}</strong></div>
-                <div><span>Destination URL</span><strong>{result?.qr_analysis?.destination_url || "Not found"}</strong></div>
-                <div><span>Recipient reputation</span><strong>{result?.qr_analysis?.recipient_reputation || "Unknown"}</strong></div>
-                <div><span>Previous reports</span><strong>{result?.qr_analysis?.previous_reports ?? 0}</strong></div>
-                <div><span>QR fingerprint</span><strong>{result?.qr_analysis?.fingerprint || "Not generated"}</strong></div>
-                <div><span>Risk signals</span><strong>{result?.qr_analysis?.risk_signals?.length ? result.qr_analysis.risk_signals.join(", ") : "None"}</strong></div>
-                <div><span>Voice emotion</span><strong>{result?.call_analysis?.emotion || "Not analyzed"}</strong></div>
-                <div><span>Pressure score</span><strong>{result?.call_analysis?.pressure_score ?? 0}%</strong></div>
-                <div><span>Live warning</span><strong>{result?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>
+                <div><span>Recipient</span><strong>{displayResult?.qr_analysis?.upi_id || "Not found"}</strong></div>
+                <div><span>Merchant</span><strong>{displayResult?.qr_analysis?.merchant || "Not found"}</strong></div>
+                <div><span>Amount</span><strong>{displayResult?.qr_analysis?.amount || "Not found"}</strong></div>
+                <div><span>Payment Note</span><strong>{displayResult?.qr_analysis?.note || "Not found"}</strong></div>
+                <div><span>Destination URL</span><strong>{displayResult?.qr_analysis?.destination_url || "Not found"}</strong></div>
+                <div><span>Recipient Reputation</span><strong>{displayResult?.qr_analysis?.recipient_reputation || "Unknown"}</strong></div>
+                <div><span>Previous BharatSHIELD Reports</span><strong>{displayResult?.qr_analysis?.previous_reports ?? 0}</strong></div>
+                <div><span>QR Fingerprint</span><strong>{displayResult?.qr_analysis?.fingerprint || "Not generated"}</strong></div>
+                <div><span>Risk Signals</span><strong>{displayResult?.qr_analysis?.risk_signals?.length ? displayResult.qr_analysis.risk_signals.join(", ") : "None"}</strong></div>
+                <div><span>Voice emotion</span><strong>{displayResult?.call_analysis?.emotion || "Not analyzed"}</strong></div>
+                <div><span>Pressure score</span><strong>{displayResult?.call_analysis?.pressure_score ?? 0}%</strong></div>
+                <div><span>Live warning</span><strong>{displayResult?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>
               </div>
             </div>
           </section>
