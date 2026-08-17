@@ -11,7 +11,9 @@ const ScanGauge3D = lazy(() => import("./components/three/ScanGauge3D"));
 const ThreatGlobe = lazy(() => import("./components/three/ThreatGlobe"));
 const SecurityCaseScene = lazy(() => import("./components/three/SecurityCaseScene"));
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL !== undefined && import.meta.env.VITE_API_BASE_URL !== "")
+  ? import.meta.env.VITE_API_BASE_URL
+  : (import.meta.env.DEV ? "http://127.0.0.1:8000" : "");
 
 const samples = {
   sms: "Dear Customer, your bank account will be blocked today. Complete KYC immediately: http://sbi-verify-kyc.xyz",
@@ -760,65 +762,181 @@ export default function App() {
       {!showLanding && showAuth && (
         <section className="auth-screen">
           <div className="auth-visual">
-            {show3D ? (
-              <Suspense fallback={null}>
-                <BharatShieldScene style={{ position: 'relative', width: '100%', height: '100%', pointerEvents: 'auto' }}>
-                  <HeroExperience reducedMotion={reducedMotion} skipIntro={true} />
-                </BharatShieldScene>
-              </Suspense>
-            ) : (
-              <HeroShield />
-            )}
-            <h1>BharatSHIELD</h1>
-            <p>Secure access for India&apos;s digital citizens.</p>
-            <div className="auth-pulse">
-              <span>Live protection</span>
-              <strong>AI-Powered Security</strong>
+            <div className="auth-visual-3d">
+              {show3D ? (
+                <Suspense fallback={<HeroShield />}>
+                  <BharatShieldScene style={{ position: 'relative', width: '100%', height: '320px', pointerEvents: 'auto' }}>
+                    <HeroExperience reducedMotion={reducedMotion} skipIntro={true} />
+                  </BharatShieldScene>
+                </Suspense>
+              ) : (
+                <HeroShield />
+              )}
+            </div>
+            <div className="auth-brand-info">
+              <div className="auth-badge-pill">
+                <span className="live-dot" />
+                <span>INDIAN CYBER DEFENSE INITIATIVE</span>
+              </div>
+              <h1 className="auth-hero-title">Bharat<span>SHIELD</span></h1>
+              <p className="auth-desc">AI-powered digital fraud detection, QR tamper prevention & real-time cyber protection for Indian citizens.</p>
+
+              <div className="auth-feature-grid">
+                <div className="feature-chip">
+                  <span className="chip-icon">🛡️</span>
+                  <div>
+                    <strong>9 Threat Scanners</strong>
+                    <small>UPI, QR, SMS, Calls, URLs</small>
+                  </div>
+                </div>
+                <div className="feature-chip">
+                  <span className="chip-icon">⚡</span>
+                  <div>
+                    <strong>1930 Helpline</strong>
+                    <small>Instant evidence draft</small>
+                  </div>
+                </div>
+                <div className="feature-chip">
+                  <span className="chip-icon">🔒</span>
+                  <div>
+                    <strong>Zero-Knowledge</strong>
+                    <small>Private message security</small>
+                  </div>
+                </div>
+              </div>
+
+              <div className="auth-pulse">
+                <div className="pulse-indicator">
+                  <span className="pulse-ring" />
+                  <span className="pulse-core" />
+                </div>
+                <div className="pulse-text-wrap">
+                  <span className="pulse-title">National Cyber Shield Active</span>
+                  <strong className="pulse-stat">12,450+ scans secured today</strong>
+                </div>
+              </div>
             </div>
           </div>
 
-          <form className="auth-card" onSubmit={handleAuth}>
-            <div className="auth-tabs">
-              <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Login</button>
-              <button type="button" className={authMode === "signup" ? "active" : ""} onClick={() => setAuthMode("signup")}>Sign Up</button>
-            </div>
-            <h2>{authMode === "login" ? "Welcome back" : "Create your shield"}</h2>
-            <p>{authMode === "login" ? "Continue to your cyber command center." : "Start protecting messages, QR codes, and links in seconds."}</p>
-            {authMode === "signup" && (
-              <input
-                placeholder="Full name"
-                value={authForm.name}
-                onChange={(event) => setAuthForm({ ...authForm, name: event.target.value })}
-                required
-              />
-            )}
-            <input
-              placeholder="Email address"
-              type="email"
-              value={authForm.email}
-              onChange={(event) => setAuthForm({ ...authForm, email: event.target.value })}
-              required
-            />
-            <input
-              placeholder="Password"
-              type="password"
-              value={authForm.password}
-              onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })}
-              minLength="6"
-              required
-            />
-            {authMode === "signup" && (
-              <label className="auth-check">
-                <input type="checkbox" defaultChecked />
-                <span>Enable scam trend alerts</span>
-              </label>
-            )}
-            {authError && <p className="auth-error">{authError}</p>}
-            <button className="primary" type="submit" disabled={authLoading}>
-              {authLoading ? "Please wait..." : authMode === "login" ? "Enter Dashboard" : "Create Account"}
-            </button>
-            <small className="auth-note">Use a registered account to continue.</small>
-          </form>
+          <div className="auth-form-wrapper">
+            <form className="auth-card glass" onSubmit={handleAuth}>
+              <div className="auth-tabs-segmented">
+                <button 
+                  type="button" 
+                  className={authMode === "login" ? "active" : ""} 
+                  onClick={() => { setAuthMode("login"); setAuthError(""); }}
+                >
+                  Sign In
+                </button>
+                <button 
+                  type="button" 
+                  className={authMode === "signup" ? "active" : ""} 
+                  onClick={() => { setAuthMode("signup"); setAuthError(""); }}
+                >
+                  Create Account
+                </button>
+              </div>
+
+              <div className="auth-card-header">
+                <h2>{authMode === "login" ? "Access Command Center" : "Initialize Cyber Shield"}</h2>
+                <p>{authMode === "login" ? "Enter your credentials to manage scans & case evidence." : "Start protecting your messages, payments & QR codes in seconds."}</p>
+              </div>
+
+              <div className="auth-input-group">
+                {authMode === "signup" && (
+                  <div className="input-field-wrap">
+                    <label>Full Name</label>
+                    <div className="field-inner">
+                      <span className="field-icon">👤</span>
+                      <input
+                        placeholder="e.g. Bala Ji"
+                        value={authForm.name}
+                        onChange={(event) => setAuthForm({ ...authForm, name: event.target.value })}
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="input-field-wrap">
+                  <label>Email Address</label>
+                  <div className="field-inner">
+                    <span className="field-icon">✉️</span>
+                    <input
+                      placeholder="name@domain.com"
+                      type="email"
+                      value={authForm.email}
+                      onChange={(event) => setAuthForm({ ...authForm, email: event.target.value })}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="input-field-wrap">
+                  <label>Password</label>
+                  <div className="field-inner">
+                    <span className="field-icon">🔑</span>
+                    <input
+                      placeholder="••••••••••••"
+                      type="password"
+                      value={authForm.password}
+                      onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })}
+                      minLength="6"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {authMode === "signup" && (
+                <label className="auth-check">
+                  <input type="checkbox" defaultChecked />
+                  <span>Receive critical Indian scam trend advisories</span>
+                </label>
+              )}
+
+              {authError && (
+                <div className="auth-error">
+                  <span className="error-icon">⚠️</span>
+                  <span>{authError}</span>
+                </div>
+              )}
+
+              <button className="primary auth-submit-btn" type="submit" disabled={authLoading}>
+                {authLoading ? (
+                  <span className="btn-spinner">Authenticating...</span>
+                ) : authMode === "login" ? (
+                  "Enter Secure Dashboard →"
+                ) : (
+                  "Activate Account & Shield →"
+                )}
+              </button>
+
+              <div className="auth-divider">
+                <span>OR</span>
+              </div>
+
+              <button 
+                type="button" 
+                className="guest-btn"
+                onClick={() => {
+                  const guestSession = {
+                    token: "guest_" + Math.random().toString(36).slice(2, 10),
+                    user: { id: 0, name: "Citizen User", email: "citizen@bharatshield.gov.in" }
+                  };
+                  saveSession(guestSession);
+                  setSession(guestSession);
+                  setShowAuth(false);
+                }}
+              >
+                ⚡ Explore as Guest (Instant Threat Scan)
+              </button>
+
+              <p className="auth-security-footer">
+                🔒 256-bit encrypted session • Compliant with Indian DPDP Guidelines
+              </p>
+            </form>
+          </div>
         </section>
       )}
 

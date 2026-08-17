@@ -15,13 +15,22 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from qr_identity import (
-    build_identity_record,
-    build_identity_check,
-    compare_identity,
-    tamper_risk_boost,
-    OWNERSHIP_DISCLAIMER,
-)
+try:
+    from .qr_identity import (
+        build_identity_record,
+        build_identity_check,
+        compare_identity,
+        tamper_risk_boost,
+        OWNERSHIP_DISCLAIMER,
+    )
+except (ImportError, ValueError):
+    from qr_identity import (
+        build_identity_record,
+        build_identity_check,
+        compare_identity,
+        tamper_risk_boost,
+        OWNERSHIP_DISCLAIMER,
+    )
 
 
 app = FastAPI(title="BharatSHIELD")
