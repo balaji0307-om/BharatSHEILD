@@ -300,6 +300,8 @@ function playScanSound() {
   }
 }
 
+const scanSteps = ["Checking message", "Finding risk words", "Checking URL", "Checking domain", "Preparing review", "Generating report"];
+
 export default function App() {
   const [mode, setMode] = useState("whatsapp");
   const [content, setContent] = useState(samples.whatsapp);
@@ -330,7 +332,7 @@ export default function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const recognitionRef = useRef(null);
 
-  const scanSteps = ["Checking message", "Finding risk words", "Checking URL", "Checking domain", "Preparing review", "Generating report"];
+  // scanSteps is declared outside the component to avoid re-creation on every render.
   const score = result?.score || 0;
   const confidence = result?.confidence || (result ? Math.min(99, result.score + 5) : 96);
   const ruleScore = result ? Math.max(14, result.score - 2) : 89;
@@ -376,7 +378,8 @@ export default function App() {
         }
       });
     return () => { cancelled = true; };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.token]);
 
   const trends = useMemo(() => {
     return history.reduce((acc, item) => {
@@ -435,6 +438,8 @@ export default function App() {
       saveHistory(nextHistory);
       setCases(nextCases);
       saveCases(nextCases);
+    } catch (err) {
+      setError(err.message || "Analysis failed. Please try again.");
     } finally {
       setTimeout(() => setLoading(false), 420);
     }
@@ -864,10 +869,10 @@ export default function App() {
               </div>
             </div>
             <div className="case-counts">
-              <div><span>Total</span><strong>{caseCounts.total || 3}</strong></div>
-              <div><span>Suspected</span><strong>{caseCounts.suspected || 1}</strong></div>
-              <div><span>Verified</span><strong>{caseCounts.verified || 1}</strong></div>
-              <div><span>Review</span><strong>{caseCounts.review || 1}</strong></div>
+              <div><span>Total</span><strong>{caseCounts.total}</strong></div>
+              <div><span>Suspected</span><strong>{caseCounts.suspected}</strong></div>
+              <div><span>Verified</span><strong>{caseCounts.verified}</strong></div>
+              <div><span>Review</span><strong>{caseCounts.review}</strong></div>
             </div>
             <div className="case-grid">
               {(visibleCases.length ? visibleCases : [

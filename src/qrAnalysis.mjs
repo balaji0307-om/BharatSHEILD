@@ -10,6 +10,7 @@ import {
 } from "./qrIdentity.mjs";
 const PRESSURE_TERMS = ["kyc", "refund", "verify", "blocked", "fee", "urgent", "registration"];
 const MERCHANT_SUSPICIOUS_TERMS = ["refund", "support", "kyc", "verification", "bank", "helpdesk"];
+const SUSPICIOUS_UPI_TERMS = ["refund", "support", "kyc", "verification", "helpdesk", "fake"];
 const UPI_ID_PATTERN = /^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z][a-zA-Z0-9.\-_]{2,}$/;
 const HANDLE_PATTERN = /^[a-zA-Z][a-zA-Z0-9.\-_]{2,}$/;
 
@@ -17,18 +18,29 @@ function clamp(value) {
   return Math.max(0, Math.min(99, value));
 }
 
-async function sha256Prefix(text) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 8)
-    .toUpperCase();
-}
+// sha256Prefix removed — unused dead code (fingerprinting is handled in qrIdentity.mjs)
 
 function parseUpiFields(text) {
   const raw = text.trim();
-  const url = new URL(raw);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    // Non-URL payload (plain text, etc.) — return empty fields
+    return {
+      raw,
+      scheme: "",
+      host: "",
+      pathname: "",
+      upiId: "",
+      merchant: "",
+      amount: "",
+      note: "",
+      upiHandle: "",
+      destinationUrl: "",
+      hiddenRedirect: false,
+    };
+  }
   const upiId = url.searchParams.get("pa") || "";
   const merchant = displayPayeeName(url.searchParams.get("pn") || "");
   let note = url.searchParams.get("tn") || "";

@@ -15,6 +15,14 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from qr_identity import (
+    build_identity_record,
+    build_identity_check,
+    compare_identity,
+    tamper_risk_boost,
+    OWNERSHIP_DISCLAIMER,
+)
+
 
 app = FastAPI(title="BharatSHIELD")
 
@@ -158,6 +166,11 @@ async def security_middleware(request: Request, call_next):
         return JSONResponse({"detail": "Too many requests. Please try again shortly."}, status_code=429)
     hits.append(now)
     request_log[client] = hits
+
+    # Prune stale IPs to prevent unbounded memory growth
+    stale_clients = [key for key, timestamps in request_log.items() if key != client and all(now - t >= RATE_LIMIT_WINDOW for t in timestamps)]
+    for key in stale_clients:
+        del request_log[key]
 
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -314,6 +327,11 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
     if not checks:
         checks.append({"label": "QR content", "result": "No UPI/payment fields detected"})
 
+    # Build identity record for richer analysis
+    identity = build_identity_record(upi_id, merchant, amount, notes)
+    tamper = compare_identity(identity, None)  # No server-side baseline
+    identity_check = build_identity_check(identity, tamper)
+
     return {
         "score": clamp(score),
         "upi_id": upi_id or "Not found",
@@ -321,6 +339,9 @@ def inspect_qr_payload(text: str) -> dict[str, Any]:
         "amount": amount or "Not found",
         "hidden_redirect": parsed.scheme in {"http", "https"} and bool(parsed.netloc),
         "checks": checks,
+        "identity": identity,
+        "identity_check": identity_check,
+        "tamper_check": tamper,
     }
 
 
