@@ -1,5 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
+import useReducedMotion from "./hooks/useReducedMotion";
+import useDeviceCapability from "./hooks/useDeviceCapability";
+
+const BharatShieldScene = lazy(() => import("./components/three/BharatShieldScene"));
+const HeroExperience = lazy(() => import("./components/three/HeroExperience"));
+const ThreatScanner = lazy(() => import("./components/three/ThreatScanner"));
+const QRHologram = lazy(() => import("./components/three/QRHologram"));
+const ScanGauge3D = lazy(() => import("./components/three/ScanGauge3D"));
+const ThreatGlobe = lazy(() => import("./components/three/ThreatGlobe"));
+const SecurityCaseScene = lazy(() => import("./components/three/SecurityCaseScene"));
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -331,6 +341,10 @@ export default function App() {
   const [error, setError] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const recognitionRef = useRef(null);
+
+  const reducedMotion = useReducedMotion();
+  const { isLowEnd, isMobile } = useDeviceCapability();
+  const show3D = !isLowEnd && !isMobile;
 
   // scanSteps is declared outside the component to avoid re-creation on every render.
   const score = result?.score || 0;
@@ -717,15 +731,23 @@ export default function App() {
     <>
       {showLanding && (
         <section className="landing-screen">
-          <div className="circuit-field circuit-left" />
-          <div className="circuit-field circuit-right" />
-          <div className="landing-center">
+          {show3D && (
+            <Suspense fallback={null}>
+              <BharatShieldScene className="hero-3d" style={{ pointerEvents: 'none' }}>
+                <HeroExperience
+                  reducedMotion={reducedMotion}
+                  skipIntro={false}
+                  onIntroComplete={() => {}}
+                />
+              </BharatShieldScene>
+            </Suspense>
+          )}
+          <div className="landing-center hero-content">
             <HeroShield />
             <h1 className="landing-title">BHARAT<span>SHIELD</span></h1>
-            <p className="landing-tagline">PROTECTING INDIA&apos;S DIGITAL FUTURE</p>
+            <p className="landing-tagline">AI-Powered Digital Scam Detection & Prevention</p>
+            <p className="landing-subtitle">Protecting India&apos;s Digital Future</p>
           </div>
-          <div className="india-skyline" />
-          <div className="tricolor-clouds" />
           <div className="landing-footer">
             <p>India Focused. Safety First.</p>
             <div className="real-loader" aria-label="Loading dashboard">
@@ -738,12 +760,20 @@ export default function App() {
       {!showLanding && showAuth && (
         <section className="auth-screen">
           <div className="auth-visual">
-            <HeroShield />
+            {show3D ? (
+              <Suspense fallback={null}>
+                <BharatShieldScene style={{ position: 'relative', width: '100%', height: '100%', pointerEvents: 'auto' }}>
+                  <HeroExperience reducedMotion={reducedMotion} skipIntro={true} />
+                </BharatShieldScene>
+              </Suspense>
+            ) : (
+              <HeroShield />
+            )}
             <h1>BharatSHIELD</h1>
             <p>Secure access for India&apos;s digital citizens.</p>
             <div className="auth-pulse">
               <span>Live protection</span>
-              <strong>1,256 scans secured today</strong>
+              <strong>AI-Powered Security</strong>
             </div>
           </div>
 
@@ -1047,14 +1077,42 @@ export default function App() {
 
             <aside className="right-stack">
               <section className="command-orbit">
-                <div className="orbit-core">
-                  <HeroShield />
-                  <strong>Live Shield</strong>
-                  <span>{result ? `${score}% threat detected` : "Monitoring"}</span>
-                </div>
-                <i className="orbit-dot one" />
-                <i className="orbit-dot two" />
-                <i className="orbit-dot three" />
+                {show3D ? (
+                  <Suspense fallback={null}>
+                    <BharatShieldScene
+                      className="scan-3d-container"
+                      style={{ position: 'relative', width: '100%', height: '280px', pointerEvents: 'auto' }}
+                    >
+                      {loading ? (
+                        <ThreatScanner active={loading} score={score} reducedMotion={reducedMotion} />
+                      ) : mode === "qr" && result?.qr_analysis ? (
+                        <QRHologram
+                          qrData={{
+                            upi_id: result.qr_analysis.upi_id || "",
+                            merchant: result.qr_analysis.merchant || "",
+                            amount: result.qr_analysis.amount || "",
+                            note: result.qr_analysis.note || "",
+                            tamper_detected: result.qr_analysis.identity_check?.tamper_detected || false,
+                          }}
+                          reducedMotion={reducedMotion}
+                        />
+                      ) : (
+                        <ScanGauge3D
+                          score={score}
+                          risk={result?.risk || "Monitoring"}
+                          confidence={confidence}
+                          reducedMotion={reducedMotion}
+                        />
+                      )}
+                    </BharatShieldScene>
+                  </Suspense>
+                ) : (
+                  <div className="orbit-core">
+                    <HeroShield />
+                    <strong>Live Shield</strong>
+                    <span>{result ? `${score}% threat detected` : "Monitoring"}</span>
+                  </div>
+                )}
               </section>
 
               <section className="glass result-focus">
@@ -1172,33 +1230,48 @@ export default function App() {
             </div>
 
             <div className="glass attack-card">
-              <h2>India Heat Map</h2>
-              <div className="india-map">
-                <svg viewBox="0 0 320 360" role="img" aria-label="India scam alert heat map">
-                  <path
-                    className="india-shape"
-                    d="M132 15l27 7 17 13 33 4 10 25 34 14 14 28-17 23 23 34-22 26 20 35-19 28 6 42-32 12-14 35-42-11-24-37-27-11-18-34-31-16 14-45-25-34 27-35-6-50 34-18 9-36z"
-                  />
-                  <path className="state-fill s1" d="M116 56l35-34 25 13 33 4 10 25-45 22-38-8z" />
-                  <path className="state-fill s2" d="M87 118l49-40 38 8 20 38-34 33-54-2z" />
-                  <path className="state-fill s3" d="M194 124l56-18 23 57-22 26-61-16-30-16z" />
-                  <path className="state-fill s4" d="M84 187l76-30 30 16-34 49-41 10-56-44z" />
-                  <path className="state-fill s5" d="M156 222l34-49 61 16 20 35-47 28-39 3z" />
-                  <path className="state-fill s6" d="M115 232l41-10 29 33 9 62-24 24-24-37-27-11z" />
-                  <path className="state-fill s7" d="M185 255l39-3 34 42-32 12-14 35-42-11 24-13z" />
-                  <path className="india-ridge" d="M130 42l42 50-12 42 45 48-34 40 23 54-18 41" />
-                  <path className="india-ridge" d="M95 124l51 4 44 45 62 16" />
-                  {stateCaseData.map(({ state, cases, x, y, level }) => (
-                    <g key={state} className={`map-point ${level}`} transform={`translate(${x} ${y})`}>
-                      <circle className="map-pulse" r={cases > 20000 ? 24 : cases > 9000 ? 20 : 16} />
-                      <circle r="8" />
-                      <text x="14" y="-7">{cases.toLocaleString("en-IN")}</text>
-                      <text className="city-label" x="14" y="10">{state}</text>
-                    </g>
-                  ))}
-                </svg>
-                <p className="map-source">Regional scam alert index</p>
-              </div>
+              <h2>Threat Visualization</h2>
+              {show3D ? (
+                <Suspense fallback={null}>
+                  <BharatShieldScene
+                    className="dashboard-3d-card"
+                    style={{ position: 'relative', width: '100%', height: '300px', pointerEvents: 'auto' }}
+                  >
+                    <ThreatGlobe
+                      threatCount={cases.filter((c) => c.investigation?.status === "Suspected").length}
+                      scanCount={history.length}
+                      reducedMotion={reducedMotion}
+                    />
+                  </BharatShieldScene>
+                </Suspense>
+              ) : (
+                <div className="india-map">
+                  <svg viewBox="0 0 320 360" role="img" aria-label="India scam alert heat map">
+                    <path
+                      className="india-shape"
+                      d="M132 15l27 7 17 13 33 4 10 25 34 14 14 28-17 23 23 34-22 26 20 35-19 28 6 42-32 12-14 35-42-11-24-37-27-11-18-34-31-16 14-45-25-34 27-35-6-50 34-18 9-36z"
+                    />
+                    <path className="state-fill s1" d="M116 56l35-34 25 13 33 4 10 25-45 22-38-8z" />
+                    <path className="state-fill s2" d="M87 118l49-40 38 8 20 38-34 33-54-2z" />
+                    <path className="state-fill s3" d="M194 124l56-18 23 57-22 26-61-16-30-16z" />
+                    <path className="state-fill s4" d="M84 187l76-30 30 16-34 49-41 10-56-44z" />
+                    <path className="state-fill s5" d="M156 222l34-49 61 16 20 35-47 28-39 3z" />
+                    <path className="state-fill s6" d="M115 232l41-10 29 33 9 62-24 24-24-37-27-11z" />
+                    <path className="state-fill s7" d="M185 255l39-3 34 42-32 12-14 35-42-11 24-13z" />
+                    <path className="india-ridge" d="M130 42l42 50-12 42 45 48-34 40 23 54-18 41" />
+                    <path className="india-ridge" d="M95 124l51 4 44 45 62 16" />
+                    {stateCaseData.map(({ state, cases, x, y, level }) => (
+                      <g key={state} className={`map-point ${level}`} transform={`translate(${x} ${y})`}>
+                        <circle className="map-pulse" r={cases > 20000 ? 24 : cases > 9000 ? 20 : 16} />
+                        <circle r="8" />
+                        <text x="14" y="-7">{cases.toLocaleString("en-IN")}</text>
+                        <text className="city-label" x="14" y="10">{state}</text>
+                      </g>
+                    ))}
+                  </svg>
+                  <p className="map-source">Regional scam alert index</p>
+                </div>
+              )}
             </div>
 
             <div className="glass">
