@@ -1,12 +1,4 @@
-"""Security wrapper for BharatSHIELD's existing FastAPI application.
-
-Keeps the full feature set intact while adding a strict deployment boundary:
-- exact CORS allowlist (no wildcard Render-origin trust)
-- authentication enforcement for sensitive API endpoints
-- conservative request-size limits
-- security response headers
-- rejects credential-bearing URLs before they reach the legacy URL analyzer
-"""
+"""Security wrapper for BharatSHIELD's existing FastAPI application."""
 
 import os
 from urllib.parse import urlparse
@@ -18,10 +10,14 @@ from . import main as legacy
 
 app = FastAPI(title="BharatSHIELD Secure Gateway")
 
+# Analysis is intentionally public: the frontend performs pre-login threat
+# analysis, while state-changing/user-data endpoints remain authenticated.
 PUBLIC_PREFIXES = {
     "/health",
     "/api/login",
     "/api/signup",
+    "/api/analyze",
+    "/api/url-check",
 }
 
 ALLOWED_ORIGINS = {
@@ -30,12 +26,7 @@ ALLOWED_ORIGINS = {
     "https://bharatshield.onrender.com",
     "https://bharatsheild.onrender.com",
 }
-ALLOWED_ORIGINS.update(
-    origin.strip().rstrip("/")
-    for origin in os.getenv("CORS_ORIGINS", "").split(",")
-    if origin.strip()
-)
-
+ALLOWED_ORIGINS.update(origin.strip().rstrip("/") for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip())
 MAX_BODY_BYTES = 1_000_000
 
 
@@ -54,7 +45,6 @@ def has_valid_session(request: Request) -> bool:
 @app.middleware("http")
 async def security_boundary(request: Request, call_next):
     origin = request.headers.get("origin", "").rstrip("/")
-
     if origin and origin not in ALLOWED_ORIGINS:
         return JSONResponse({"detail": "Origin is not allowed."}, status_code=403)
 
@@ -76,10 +66,7 @@ async def security_boundary(request: Request, call_next):
             raw = str(payload.get("url", ""))
             parsed = urlparse(raw if "://" in raw else "https://" + raw)
             if parsed.username or parsed.password:
-                return JSONResponse(
-                    {"detail": "URLs containing embedded credentials are not accepted."},
-                    status_code=400,
-                )
+                return JSONResponse({"detail": "URLs containing embedded credentials are not accepted."}, status_code=400)
         except Exception:
             pass
 
@@ -88,12 +75,7 @@ async def security_boundary(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; connect-src 'self' https://generativelanguage.googleapis.com; "
-        "img-src 'self' data: blob:; media-src 'self' blob:; "
-        "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    )
+    response.headers["Content-Security-Policy"] = "default-src 'self'; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if origin in ALLOWED_ORIGINS:
@@ -102,6 +84,5 @@ async def security_boundary(request: Request, call_next):
     return response
 
 
-# Mount the unchanged application so QR identity, tamper detection,
-# security cases, PDF reports, and the existing frontend remain available.
+# Keep the full existing application mounted unchanged.
 app.mount("/", legacy.app)
