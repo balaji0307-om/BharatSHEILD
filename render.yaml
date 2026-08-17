@@ -8,5 +8,7 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: VITE_API_BASE_URL
+        value: ""
       - key: CORS_ORIGINS
-        value: https://bharatshield.onrender.com
+        value: https://bharatshield.onrender.com,https://bharatsheild.onrender.com

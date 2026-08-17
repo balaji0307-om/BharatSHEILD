@@ -2,10 +2,12 @@
 
 import hashlib
 import os
+from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import main as legacy
 
@@ -308,4 +310,28 @@ async def analyze_gateway(request: Request):
         return JSONResponse({"detail": "Analysis service unavailable."}, status_code=503)
 
 
-app.mount("/", legacy.app)
+# Forward non-QR API routes and health check to the legacy app
+for route in legacy.app.routes:
+    app.routes.append(route)
+
+# Serve Vite-built frontend from dist/
+DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
+
+if DIST_DIR.is_dir():
+    # Serve static assets (JS, CSS, images)
+    ASSETS_DIR = DIST_DIR / "assets"
+    if ASSETS_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+
+    # Serve other static files from public/ that end up in dist/ (favicons, images, etc.)
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        # Try to serve the file directly from dist/
+        file_path = DIST_DIR / full_path
+        if full_path and file_path.is_file() and DIST_DIR in file_path.resolve().parents:
+            return FileResponse(str(file_path))
+        # Fallback to index.html for SPA routing
+        index_path = DIST_DIR / "index.html"
+        if index_path.is_file():
+            return FileResponse(str(index_path))
+        return JSONResponse({"detail": "Not found"}, status_code=404)
