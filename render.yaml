@@ -4,7 +4,9 @@ services:
     runtime: python
     plan: free
     buildCommand: npm install && npm run build && pip install -r backend/requirements.txt
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn backend.secure_main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: CORS_ORIGINS
+        value: https://bharatshield.onrender.com
