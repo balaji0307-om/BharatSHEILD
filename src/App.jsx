@@ -1,26 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
-import { buildMetricDisplay } from "./displayMetrics.mjs";
-import {
-  buildLocalQrAnalysisResult,
-  getVerifiedQrBaseline,
-  saveVerifiedQrBaseline,
-} from "./qrAnalysis.mjs";
 
-function resolveApiBase() {
-  const configured = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "");
-  if (configured) return configured;
-  if (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") {
-    return "http://127.0.0.1:8000";
-  }
-  if (window.location.hostname.endsWith(".onrender.com")) {
-    return window.location.origin;
-  }
-  return "";
-}
-
-const API_BASE = resolveApiBase();
-const LANDING_DURATION_MS = 5200;
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 const samples = {
   sms: "Dear Customer, your bank account will be blocked today. Complete KYC immediately: http://sbi-verify-kyc.xyz",
@@ -46,7 +27,7 @@ const modes = [
   ["news", "Fake News"],
 ];
 
-const navItems = ["Dashboard", "Scan", "Guardian", "Report Scam", "Awareness", "Emergency", "Scam Awareness", "History", "Settings"];
+const navItems = ["Dashboard", "Scan", "Guardian", "Report Scam", "Awareness", "Emergency", "Live Scam Alerts", "History", "Settings"];
 
 const modeMeta = {
   sms: { title: "Messages", sender: "SMS Alert", tone: "blue" },
@@ -61,10 +42,10 @@ const modeMeta = {
 };
 
 const threatIntel = [
-  ["Scans analyzed", "127", "Demo workspace"],
-  ["Threats detected", "34", "From recent scans"],
-  ["Reports generated", "8", "Complaint drafts"],
-  ["Helpline", "1930", "Emergency support"],
+  ["Money protected", "INR 11,158 Cr", "Latest public update"],
+  ["People assisted", "32.80 lakh", "Complaint support"],
+  ["Fraud complaints", "53.87 lakh", "Recent period"],
+  ["Helpline", "1930", "Active nationwide"],
 ];
 
 const stateCaseData = [
@@ -137,9 +118,11 @@ const allowedEvidence = [".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp3", ".wav"
 const caseStatuses = ["Suspected", "Verified", "Needs Review"];
 const caseRoles = ["User", "Investigator", "Reviewer", "Admin", "Authority"];
 
-function isAllowedEvidence(fileName) {
-  const lower = fileName.toLowerCase();
-  return allowedEvidence.some((ext) => lower.endsWith(ext));
+function isAllowedEvidence(file) {
+  const lower = file.name.toLowerCase();
+  const maxBytes = 15 * 1024 * 1024;
+  const extensionAllowed = allowedEvidence.some((ext) => lower.endsWith(ext));
+  return extensionAllowed && file.size <= maxBytes;
 }
 
 function getStoredHistory() {
@@ -166,68 +149,13 @@ function saveCases(items) {
   localStorage.setItem("bharatshield_cases", JSON.stringify(items.slice(0, 50)));
 }
 
-function authHeaders(token, extra = {}) {
-  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
-}
-
-async function fetchBackendCases(owner, token) {
-  const query = owner ? `?owner=${encodeURIComponent(owner)}` : "";
-  const response = await fetch(`${API_BASE}/api/cases${query}`, {
-    headers: authHeaders(token),
-  });
-  if (!response.ok) throw new Error("Could not load cases.");
-  return response.json();
-}
-
-async function saveBackendCase(item, token) {
-  const response = await fetch(`${API_BASE}/api/cases`, {
-    method: "POST",
-    headers: authHeaders(token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ case: item }),
-  });
-  if (!response.ok) throw new Error("Could not save case.");
-  return response.json();
-}
-
-async function patchBackendCase(caseId, patch, token) {
-  const response = await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}`, {
-    method: "PATCH",
-    headers: authHeaders(token, { "Content-Type": "application/json" }),
-    body: JSON.stringify(patch),
-  });
-  if (!response.ok) throw new Error("Could not update case.");
-  return response.json();
-}
-
 function makeCaseId() {
   return `BS-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
 function buildSecurityCase(analysis, input, channel, user) {
   const createdAt = new Date().toISOString();
-  const numericScore = Number.isFinite(Number(analysis.score)) ? Number(analysis.score) : 45;
-  const tamper = analysis.qr_analysis?.tamper_check;
-  let status = analysis.verification_failed
-    ? "Needs Review"
-    : numericScore >= 70
-      ? "Suspected"
-      : numericScore >= 35
-        ? "Needs Review"
-        : "Verified";
-  if (tamper?.tamper_detected) {
-    status = tamper.severity === "high" ? "Suspected" : "Needs Review";
-  } else if (analysis.scam_type === "QR Verified Baseline" || analysis.qr_analysis?.user_verified) {
-    status = "Verified";
-  }
-  const timeline = [
-    { label: "Content submitted", time: createdAt },
-    { label: "Analysis completed", time: createdAt },
-    { label: `${analysis.risk || "Medium"} risk detected`, time: createdAt },
-  ];
-  if (tamper?.tamper_detected) {
-    timeline.push({ label: tamper.headline || tamper.change_status || "QR tamper detected", time: createdAt });
-  }
-  timeline.push({ label: `Case marked ${status}`, time: createdAt });
+  const status = analysis.score >= 70 ? "Suspected" : analysis.score >= 35 ? "Needs Review" : "Verified";
   return {
     case_id: analysis.case_id || makeCaseId(),
     type: analysis.scam_type || "Security Review",
@@ -236,90 +164,37 @@ function buildSecurityCase(analysis, input, channel, user) {
     owner: user?.email || "local-user",
     ai_result: {
       risk: analysis.risk,
-      score: numericScore,
+      score: analysis.score,
       confidence: analysis.confidence,
       explanation: analysis.what_we_found || analysis.explanation || "Security review completed.",
       reasons: (analysis.signals || []).slice(0, 6).map((item) => `${item.label}: ${item.reason}`),
-      qr_analysis: analysis.qr_analysis || null,
     },
     investigation: {
       status,
-      note: tamper?.tamper_detected ? tamper.summary || tamper.explanation || "" : "",
+      note: "",
       reviewed_by: null,
       reviewed_at: null,
     },
-    timeline,
+    timeline: [
+      { label: "Content submitted", time: createdAt },
+      { label: "Analysis completed", time: createdAt },
+      { label: `${analysis.risk || "Medium"} risk detected`, time: createdAt },
+      { label: `Case marked ${status}`, time: createdAt },
+    ],
     created_at: createdAt,
   };
 }
 
 function getStoredSession() {
   try {
-    return JSON.parse(localStorage.getItem("bharatshield_session") || "null");
+    return JSON.parse(sessionStorage.getItem("bharatshield_session") || "null");
   } catch {
     return null;
   }
 }
 
 function saveSession(session) {
-  localStorage.setItem("bharatshield_session", JSON.stringify(session));
-}
-
-function getStoredUsers() {
-  try {
-    return JSON.parse(localStorage.getItem("bharatshield_users") || "[]");
-  } catch {
-    return [];
-  }
-}
-
-function saveStoredUsers(users) {
-  localStorage.setItem("bharatshield_users", JSON.stringify(users));
-}
-
-function upsertLocalUser(user, password) {
-  if (!user?.email || !password) return;
-  const users = getStoredUsers();
-  const email = user.email.trim().toLowerCase();
-  const localUser = {
-    id: user.id || Date.now(),
-    name: user.name || "User",
-    email,
-    password,
-  };
-  const nextUsers = users.some((item) => item.email === email)
-    ? users.map((item) => item.email === email ? { ...item, ...localUser } : item)
-    : [...users, localUser];
-  saveStoredUsers(nextUsers);
-}
-
-function createLocalSession(user) {
-  return {
-    token: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    user: { id: user.id, name: user.name, email: user.email },
-  };
-}
-
-function localAuth(mode, form) {
-  const users = getStoredUsers();
-  const email = form.email.trim().toLowerCase();
-  if (mode === "signup") {
-    if (users.some((user) => user.email === email)) {
-      throw new Error("This email is already signed up. Please login.");
-    }
-    const user = {
-      id: Date.now(),
-      name: form.name.trim() || "User",
-      email,
-      password: form.password,
-    };
-    saveStoredUsers([...users, user]);
-    return createLocalSession(user);
-  }
-
-  const user = users.find((item) => item.email === email && item.password === form.password);
-  if (!user) throw new Error("Account not found. Please sign up first.");
-  return createLocalSession(user);
+  sessionStorage.setItem("bharatshield_session", JSON.stringify(session));
 }
 
 function riskColor(score = 0) {
@@ -351,174 +226,6 @@ function highlightedText(text) {
     html = html.replace(new RegExp(`(${term})`, "gi"), '<mark class="danger">$1</mark>');
   }
   return { __html: html };
-}
-
-function qrUnableToVerifyAnalysis(text) {
-  let qrPayload = {
-    upi_id: "Not found",
-    merchant: "Not found",
-    amount: "Not found",
-    note: "Not found",
-    destination_url: "Not found",
-    hidden_redirect: false,
-    fingerprint: "BS-QR-UNVERIFIED",
-    recipient_reputation: "Unknown",
-    previous_reports: 0,
-    risk_signals: [],
-  };
-  try {
-    const url = new URL(text.trim());
-    qrPayload = {
-      ...qrPayload,
-      upi_id: url.searchParams.get("pa") || "Not found",
-      merchant: url.searchParams.get("pn") || "Not found",
-      amount: url.searchParams.get("am") || "Not found",
-      note: url.searchParams.get("tn") || "Not found",
-      destination_url: url.protocol === "http:" || url.protocol === "https:" ? text.trim() : "Not found",
-      hidden_redirect: url.protocol === "http:" || url.protocol === "https:",
-    };
-  } catch {
-    // Keep minimal unverified payload fields.
-  }
-  return {
-    score: null,
-    risk: "Unable to verify",
-    scam_type: "QR Verification Unavailable",
-    confidence: null,
-    rule_score: null,
-    url_score: null,
-    safety_score: null,
-    verification_failed: true,
-    mode: "qr",
-    signals: [{ label: "QR verification", reason: "Backend QR verification was unavailable." }],
-    recommendations: [
-      "Unable to verify this QR. Do not make the payment yet.",
-      "Open your UPI app yourself and verify recipient, merchant, amount, and purpose.",
-      "Do not approve payment if the sender is pressuring you.",
-    ],
-    reason_breakdown: [
-      { label: "Message language", score: 0, why: "Backend verification was unavailable." },
-      { label: "Urgency and pressure", score: 0, why: "Do not continue if the sender is creating urgency." },
-      { label: "Credential risk", score: 0, why: "Never share OTP, PIN, or password." },
-      { label: "URL / QR risk", score: 45, why: "QR payload is unverified. Payment should not continue yet." },
-    ],
-    url_checks: qrPayload.hidden_redirect ? [{ domain: qrPayload.destination_url, score: 45, checks: [{ label: "Status", result: "Unverified QR destination" }] }] : [],
-    qr_analysis: qrPayload,
-    call_analysis: { emotion: "Not analyzed", pressure_score: 0, live_warning: false },
-    what_we_found: `QR payload decoded for recipient ${qrPayload.upi_id}, merchant ${qrPayload.merchant}, amount ${qrPayload.amount}, note ${qrPayload.note}.`,
-    why_dangerous: "Unable to verify this QR. Do not make the payment yet.",
-    how_sure: "55% confidence because only local QR parsing completed.",
-  };
-}
-
-function makeGuardianOtp(mobile) {
-  const digits = mobile.replace(/\D/g, "").slice(-10);
-  if (digits.length < 10) return "";
-  let seed = 0;
-  for (let index = 0; index < digits.length; index += 1) {
-    seed = (seed * 31 + Number(digits[index])) % 1000000;
-  }
-  return String((seed + 100000) % 1000000).padStart(6, "0");
-}
-
-function maskMobile(mobile) {
-  const digits = mobile.replace(/\D/g, "").slice(-10);
-  if (digits.length < 4) return "";
-  return `+91 ******${digits.slice(-4)}`;
-}
-
-function detectHiddenImagePayload(bytes, fileName) {
-  const view = new Uint8Array(bytes);
-  const text = Array.from(view.slice(0, Math.min(view.length, 16000)))
-    .map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : " "))
-    .join("")
-    .toLowerCase();
-  const ext = fileName.toLowerCase().split(".").pop() || "";
-  const signatures = [
-    ["<script", "script tag"],
-    ["javascript:", "javascript payload"],
-    ["powershell", "PowerShell command"],
-    ["cmd.exe", "command shell marker"],
-    ["<?php", "PHP code"],
-    ["eval(", "eval code"],
-    ["mzm", "executable marker"],
-  ];
-  const marker = signatures.find(([pattern]) => text.includes(pattern));
-  if (marker) return `Hidden ${marker[1]} found inside image bytes.`;
-
-  if (view[0] === 0x50 && view[1] === 0x4b) return "ZIP/APK-style file signature found. This is not a safe QR image.";
-  if (view[0] === 0x4d && view[1] === 0x5a) return "Executable file signature found. This is not a safe QR image.";
-
-  if (ext === "png") {
-    const tail = "iend";
-    const ascii = Array.from(view).map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : " ")).join("").toLowerCase();
-    const endIndex = ascii.lastIndexOf(tail);
-    if (endIndex >= 0 && view.length - endIndex > 32) {
-      const afterEnd = ascii.slice(endIndex + tail.length).trim();
-      if (afterEnd.length > 12) return "Extra hidden data found after PNG end marker.";
-    }
-  }
-
-  if ((ext === "jpg" || ext === "jpeg") && view.length > 4) {
-    let end = -1;
-    for (let index = view.length - 2; index >= 0; index -= 1) {
-      if (view[index] === 0xff && view[index + 1] === 0xd9) {
-        end = index + 2;
-        break;
-      }
-    }
-    if (end > 0 && view.length - end > 24) return "Extra hidden data found after JPEG end marker.";
-  }
-
-  return "";
-}
-
-function clientAnalysis(text, channel) {
-  const lowered = text.toLowerCase();
-  const checks = [
-    ["otp", 22, "OTP request"],
-    ["pin", 20, "PIN request"],
-    ["password", 20, "Password request"],
-    ["kyc", 18, "KYC pressure"],
-    ["blocked", 18, "Account block threat"],
-    ["urgent", 14, "Urgent language"],
-    ["congratulations", 12, "Prize bait"],
-    ["winner", 12, "Lottery claim"],
-    ["registration fee", 18, "Advance fee"],
-    ["double your money", 24, "Unrealistic return"],
-    ["http", 18, "External link"],
-  ];
-  const hits = checks.filter(([term]) => lowered.includes(term));
-  const score = Math.min(96, 12 + hits.reduce((sum, [, weight]) => sum + weight, 0) + (channel === "url" ? 8 : 0));
-  const scamType = lowered.includes("job") || lowered.includes("hiring") ? "Fake Job" : lowered.includes("investment") || lowered.includes("double your money") ? "Investment Scam" : lowered.includes("http") || channel === "url" ? "Phishing" : "Suspicious Message";
-  const signals = hits.map(([term, , label]) => ({ label, reason: `${term} found in the content` }));
-  return {
-    score,
-    risk: score >= 75 ? "Critical" : score >= 55 ? "High" : score >= 30 ? "Medium" : "Low",
-    scam_type: scamType,
-    confidence: Math.min(98, score + 4),
-    rule_score: Math.max(20, score - 2),
-    url_score: channel === "url" || lowered.includes("http") ? Math.min(95, score + 5) : 0,
-    safety_score: Math.max(4, 100 - score),
-    signals,
-    recommendations: [
-      "Do not click links or open attachments from this message.",
-      "Never share OTP, UPI PIN, passwords, or card details.",
-      "Verify through the official app or website by typing the address yourself.",
-    ],
-    reason_breakdown: [
-      { label: "Message language", score: Math.min(90, hits.length * 16), why: hits.length ? "Risk words found in the content." : "No major risk words found." },
-      { label: "Urgency and pressure", score: lowered.includes("urgent") || lowered.includes("blocked") ? 82 : 16, why: "Pressure language is reviewed." },
-      { label: "Credential risk", score: lowered.includes("otp") || lowered.includes("pin") || lowered.includes("password") ? 92 : 12, why: "Checks for OTP, PIN, and password requests." },
-      { label: "URL / QR risk", score: lowered.includes("http") || channel === "url" ? 84 : 8, why: "Links and QR payloads are reviewed." },
-    ],
-    url_checks: lowered.includes("http") || channel === "url" ? [{ domain: text.replace(/^https?:\/\//, "").split(/[/?#]/)[0] || "Link", score: Math.min(95, score + 5), checks: [{ label: "Status", result: "Review carefully" }] }] : [],
-    qr_analysis: null,
-    call_analysis: { emotion: lowered.includes("blocked") ? "Pressure detected" : "Not analyzed", pressure_score: lowered.includes("urgent") || lowered.includes("blocked") ? 82 : 18, live_warning: score >= 70 },
-    what_we_found: hits.length ? `Found ${hits.length} risk signals in this content.` : "No major scam signal found in this content.",
-    why_dangerous: score >= 55 ? "This content may push the user toward a risky action such as clicking a link or sharing private details." : "The content does not show strong scam indicators, but verify before acting.",
-    how_sure: `${Math.min(98, score + 4)}% confidence based on visible content checks.`,
-  };
 }
 
 function ShieldLogo() {
@@ -571,79 +278,6 @@ function HeroShield() {
   );
 }
 
-const landingSignals = [
-  { type: "QR", text: "upi://pay" },
-  { type: "URL", text: "sbi-secure-login" },
-  { type: "SMS", text: "OTP request" },
-  { type: "UPI", text: "refund-support@upi" },
-];
-
-function CinematicLanding() {
-  return (
-    <section className="landing-screen cinematic-landing">
-      <div className="landing-mesh" aria-hidden="true" />
-      <div className="landing-light landing-light-left" aria-hidden="true" />
-      <div className="landing-light landing-light-right" aria-hidden="true" />
-      <div className="particle-field" aria-hidden="true">
-        {Array.from({ length: 30 }).map((_, index) => (
-          <span
-            key={index}
-            style={{
-              "--i": String(index),
-              "--x": `${(index * 37) % 100}%`,
-              "--y": `${(index * 19) % 100}%`,
-              "--z": `${index * 2}px`,
-              "--duration": `${5.5 + index * 0.12}s`,
-              "--delay": `${index * -0.22}s`,
-            }}
-          />
-        ))}
-      </div>
-      <div className="threat-cloud" aria-hidden="true">
-        {landingSignals.map((signal, index) => (
-          <span
-            key={`${signal.type}-${signal.text}`}
-            style={{
-              "--i": String(index),
-              "--x": `${9 + index * 18}%`,
-              "--y": `${15 + index * 13}%`,
-              "--delay": `${index * -1.3}s`,
-            }}
-          >
-            <b>{signal.type}</b>
-            {signal.text}
-          </span>
-        ))}
-      </div>
-
-      <div className="landing-stage">
-        <div className="shield-rings" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </div>
-        <div className="shield-3d">
-          <HeroShield />
-          <span className="shield-scan" aria-hidden="true" />
-        </div>
-      </div>
-
-      <div className="landing-copy">
-        <h1>BharatSHIELD</h1>
-        <span>Protect every link, QR code, message, and payment before it becomes a threat.</span>
-      </div>
-
-      <div className="landing-status">
-        <strong>India Focused. Safety First.</strong>
-        <div className="real-loader" aria-label="Loading dashboard">
-          <span />
-        </div>
-        <small>Initializing shield</small>
-      </div>
-    </section>
-  );
-}
-
 function playScanSound() {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -673,7 +307,6 @@ export default function App() {
   const [history, setHistory] = useState(getStoredHistory);
   const [cases, setCases] = useState(getStoredCases);
   const [loading, setLoading] = useState(false);
-  const [activeAnalysisMode, setActiveAnalysisMode] = useState("");
   const [scanStep, setScanStep] = useState(0);
   const [showReport, setShowReport] = useState(false);
   const [showLanding, setShowLanding] = useState(true);
@@ -695,29 +328,15 @@ export default function App() {
   const [privacyMode, setPrivacyMode] = useState(true);
   const [error, setError] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
-  const [guardianForm, setGuardianForm] = useState({ mobile: "", otp: "", sentOtp: "", otpSent: false });
   const recognitionRef = useRef(null);
 
   const scanSteps = ["Checking message", "Finding risk words", "Checking URL", "Checking domain", "Preparing review", "Generating report"];
-  const displayResult = result?.mode === mode ? result : null;
-  const isQrResult = displayResult?.mode === "qr" || Boolean(displayResult?.qr_analysis);
-  const isQrPanel = mode === "qr" || activeAnalysisMode === "qr" || isQrResult;
-  const isAnalyzingCurrentMode = loading && activeAnalysisMode === mode;
-  const metricDisplay = buildMetricDisplay({ displayResult, mode, activeAnalysisMode, loading });
-  const score = metricDisplay.scoreValue ?? 0;
-  const gaugeScore = metricDisplay.gaugeScore;
-  const scoreDisplay = metricDisplay.scoreDisplay;
-  const confidenceDisplay = metricDisplay.confidenceDisplay;
-  const ruleScoreDisplay = metricDisplay.ruleScoreDisplay;
-  const urlScoreDisplay = metricDisplay.urlScoreDisplay;
-  const dashboardSafetyScore = Number.isFinite(Number(displayResult?.safety_score)) ? Number(displayResult.safety_score) : 76;
-  const safetyScoreDisplay = metricDisplay.safetyScoreDisplay;
-  const liveShieldStatus = metricDisplay.liveShieldStatus;
-  const threatCardTitle = isQrPanel ? "QR Risk Analysis" : "Threat Level";
-  const riskLevelDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult?.risk || threatCardTitle;
+  const score = result?.score || 0;
+  const confidence = result?.confidence || (result ? Math.min(99, result.score + 5) : 96);
+  const ruleScore = result ? Math.max(14, result.score - 2) : 89;
+  const urlScore = result?.url_checks?.length ? Math.max(...result.url_checks.map((item) => item.score)) : result ? Math.max(30, result.score - 7) : 95;
+  const safetyScore = result?.safety_score ?? 76;
   const incidentId = useMemo(() => `BS-${Math.floor(20000 + Math.random() * 70000)}`, [result?.created_at]);
-  const guardianOtp = makeGuardianOtp(guardianForm.mobile);
-  const guardianMaskedMobile = maskMobile(guardianForm.mobile);
 
   useEffect(() => {
     if (!loading) return;
@@ -730,26 +349,34 @@ export default function App() {
     const timer = setTimeout(() => {
       setShowLanding(false);
       setShowAuth(!session);
-    }, LANDING_DURATION_MS);
+    }, 2000);
     return () => clearTimeout(timer);
   }, [session]);
 
   useEffect(() => {
-    if (!session?.user?.email) return;
+    if (!session?.token) return;
     let cancelled = false;
-    fetchBackendCases(session.user.email, session.token)
+    fetch(`${API_BASE}/api/me`, { headers: { Authorization: `Bearer ${session.token}` } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Session invalid");
+        return response.json();
+      })
       .then((data) => {
-        if (cancelled || !Array.isArray(data.cases) || !data.cases.length) return;
-        setCases(data.cases);
-        saveCases(data.cases);
+        if (!cancelled) {
+          const next = { ...session, user: data.user };
+          saveSession(next);
+          setSession(next);
+        }
       })
       .catch(() => {
-        // Keep local cases for offline demo mode.
+        if (!cancelled) {
+          sessionStorage.removeItem("bharatshield_session");
+          setSession(null);
+          setShowAuth(true);
+        }
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [session?.user?.email, session?.token]);
+    return () => { cancelled = true; };
+  }, []);
 
   const trends = useMemo(() => {
     return history.reduce((acc, item) => {
@@ -778,118 +405,29 @@ export default function App() {
     setContent(samples[nextMode] || "");
     setAudioFileName("");
     setError("");
-    setResult(null);
-    setActiveAnalysisMode("");
-  }
-
-  async function analyzeQrPayload(input) {
-    const verifiedBaseline = getVerifiedQrBaseline();
-    if (API_BASE) {
-      try {
-        const response = await fetch(`${API_BASE}/api/analyze`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: input,
-            channel: "qr",
-            language: "en",
-            verified_baseline: verifiedBaseline,
-          }),
-        });
-        const contentType = response.headers.get("content-type") || "";
-        if (response.ok && contentType.includes("application/json")) {
-          const data = await response.json();
-          if (data?.qr_analysis) return { ...data, mode: "qr" };
-        }
-      } catch {
-        // Use local deterministic QR review when backend is unavailable.
-      }
-    }
-    return { ...(await buildLocalQrAnalysisResult(input, verifiedBaseline)), mode: "qr" };
-  }
-
-  async function verifyAndSaveQr() {
-    if (!content.trim()) {
-      setError("Upload a QR image or paste decoded QR content first.");
-      return;
-    }
-    const identity = displayResult?.qr_analysis?.identity;
-    if (!identity) {
-      setError("Analyze the QR first before saving a verified baseline.");
-      return;
-    }
-    setError("");
-    if (API_BASE && session?.token) {
-      try {
-        const response = await fetch(`${API_BASE}/api/qr/verify`, {
-          method: "POST",
-          headers: { ...authHeaders(session.token), "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.baseline) saveVerifiedQrBaseline(data.baseline);
-          if (data.case) {
-            const nextCases = [data.case, ...cases.filter((item) => item.case_id !== data.case.case_id)];
-            setCases(nextCases);
-            saveCases(nextCases);
-          }
-          await runAnalysis(content, "qr");
-          return;
-        }
-      } catch {
-        // Fall back to local baseline storage.
-      }
-    }
-    const baseline = saveVerifiedQrBaseline(identity);
-    const verifiedAnalysis = {
-      score: displayResult?.score ?? 0,
-      risk: "Low",
-      confidence: 62,
-      scam_type: "QR Verified Baseline",
-      what_we_found: "User verified this QR baseline for future tamper comparison.",
-      signals: [{ label: "QR baseline", reason: "User verified QR baseline saved locally." }],
-      qr_analysis: { ...displayResult.qr_analysis, user_verified: true, verified_baseline: baseline },
-    };
-    const verifiedCase = buildSecurityCase(verifiedAnalysis, content, "qr", session?.user);
-    verifiedCase.investigation = {
-      status: "Verified",
-      note: "User verified QR baseline.",
-      reviewed_by: session?.user?.name || null,
-      reviewed_at: new Date().toISOString(),
-    };
-    const nextCases = [verifiedCase, ...cases];
-    setCases(nextCases);
-    saveCases(nextCases);
-    saveBackendCase(verifiedCase, session?.token).catch(() => {});
-    await runAnalysis(content, "qr");
   }
 
   async function runAnalysis(input = content, channel = mode) {
-    if (!input.trim()) {
-      setError(channel === "qr" ? "Upload a QR image or paste decoded QR content first." : "Paste content first.");
-      return;
-    }
+    if (!input.trim()) return;
     playScanSound();
     setLoading(true);
-    setActiveAnalysisMode(channel);
     setError("");
-    setResult(null);
-    setContent(input);
     setShowLanding(false);
     try {
-      let data;
-      if (channel === "qr") {
-        data = await analyzeQrPayload(input);
-      } else {
-        const response = await fetch(`${API_BASE}/api/analyze`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: input, channel, language: "en" }),
-        });
-        if (!response.ok) throw new Error("Service is unavailable. Please try again.");
-        data = { ...(await response.json()), mode: channel };
+      const response = await fetch(`${API_BASE}/api/analyze`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.token || ""}`,
+        },
+        body: JSON.stringify({ content: input, channel, language: "en" }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        logout();
+        throw new Error("Your session expired. Please login again.");
       }
+      if (!response.ok) throw new Error(data.detail || "Analysis service is unavailable. Please try again.");
       setResult(data);
       const nextHistory = [{ ...data, mode: channel, preview: input.slice(0, 120) }, ...history];
       const nextCases = [buildSecurityCase(data, input, channel, session?.user), ...cases];
@@ -897,48 +435,8 @@ export default function App() {
       saveHistory(nextHistory);
       setCases(nextCases);
       saveCases(nextCases);
-      saveBackendCase(nextCases[0], session?.token).catch(() => {});
-    } catch (err) {
-      if (channel === "qr") {
-        try {
-          const fallback = { ...(await buildLocalQrAnalysisResult(input, getVerifiedQrBaseline())), mode: channel };
-          setResult(fallback);
-          const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
-          const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
-          setHistory(nextHistory);
-          saveHistory(nextHistory);
-          setCases(nextCases);
-          saveCases(nextCases);
-          saveBackendCase(nextCases[0], session?.token).catch(() => {});
-          setError("");
-        } catch {
-          const fallback = { ...qrUnableToVerifyAnalysis(input), mode: channel };
-          setResult(fallback);
-          const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
-          const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
-          setHistory(nextHistory);
-          saveHistory(nextHistory);
-          setCases(nextCases);
-          saveCases(nextCases);
-          saveBackendCase(nextCases[0], session?.token).catch(() => {});
-          setError("Unable to verify this QR. Do not make the payment yet.");
-        }
-      } else {
-        const fallback = { ...clientAnalysis(input, channel), mode: channel };
-        setResult(fallback);
-        const nextHistory = [{ ...fallback, mode: channel, preview: input.slice(0, 120) }, ...history];
-        const nextCases = [buildSecurityCase(fallback, input, channel, session?.user), ...cases];
-        setHistory(nextHistory);
-        saveHistory(nextHistory);
-        setCases(nextCases);
-        saveCases(nextCases);
-        saveBackendCase(nextCases[0], session?.token).catch(() => {});
-      }
     } finally {
-      setTimeout(() => {
-        setLoading(false);
-        setActiveAnalysisMode("");
-      }, 420);
+      setTimeout(() => setLoading(false), 420);
     }
   }
 
@@ -947,55 +445,6 @@ export default function App() {
     if (!file) return;
     setError("");
     try {
-      if (!/^image\/(png|jpe?g|webp|bmp|gif)$/i.test(file.type)) {
-        setError("Blocked: upload a real image file only for QR scanning.");
-        return;
-      }
-      const bytes = await file.arrayBuffer();
-      const hiddenPayload = detectHiddenImagePayload(bytes, file.name);
-      if (hiddenPayload) {
-        setMode("qr");
-        setContent("");
-        setResult({
-          score: 88,
-          risk: "Critical",
-          confidence: 94,
-          rule_score: 90,
-          url_score: 0,
-          safety_score: 12,
-          scam_type: "Unsafe QR Image",
-          signals: [{ label: "Image payload", reason: hiddenPayload }],
-          recommendations: [
-            "Do not scan or share this image.",
-            "Ask the sender for a clean QR image from an official source.",
-            "Report the sender if this image came with payment pressure.",
-          ],
-          reason_breakdown: [
-            { label: "Image safety", score: 92, why: hiddenPayload },
-            { label: "QR verification", score: 88, why: "QR scan was blocked before decoding." },
-            { label: "Credential risk", score: 20, why: "No credential text was decoded." },
-            { label: "URL / QR risk", score: 88, why: "Image container has suspicious hidden payload markers." },
-          ],
-          url_checks: [],
-          qr_analysis: {
-            upi_id: "Blocked",
-            merchant: "Blocked",
-            amount: "Blocked",
-            note: hiddenPayload,
-            recipient_reputation: "Unsafe image",
-            previous_reports: 0,
-            fingerprint: "BS-QR-BLOCKED",
-            hidden_redirect: false,
-            checks: [{ label: "Image safety", result: hiddenPayload }],
-          },
-          call_analysis: { emotion: "Not analyzed", pressure_score: 0, live_warning: false },
-          what_we_found: "This QR image was blocked before scanning because hidden payload markers were detected.",
-          why_dangerous: "Attackers can hide script, executable, or extra data inside image files. BharatSHIELD refused to process this image.",
-          how_sure: "94% confidence based on image container safety checks.",
-        });
-        setError(`Blocked unsafe QR image: ${hiddenPayload}`);
-        return;
-      }
       const bitmap = await createImageBitmap(file);
       let decoded = "";
 
@@ -1021,19 +470,15 @@ export default function App() {
 
       if (!decoded) {
         setError("No QR code found. Try a clearer, uncropped QR image.");
-        event.target.value = "";
         return;
       }
 
       setMode("qr");
       setContent(decoded);
-      setResult(null);
       setError(autoScan ? "" : "QR decoded. Review the content, then click Analyze QR.");
       if (autoScan) runAnalysis(decoded, "qr");
     } catch {
       setError("Could not read this QR image. Try a clearer, uncropped QR image.");
-    } finally {
-      event.target.value = "";
     }
   }
 
@@ -1064,8 +509,8 @@ export default function App() {
   function handleAudioUpload(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!isAllowedEvidence(file.name)) {
-      setError("Unsupported file type. Upload jpg, png, pdf, txt, mp3, wav, or m4a only.");
+    if (!isAllowedEvidence(file)) {
+      setError("Unsupported or oversized file. Allowed: jpg, png, pdf, txt, mp3, wav, m4a up to 15 MB.");
       return;
     }
     setMode("call");
@@ -1076,9 +521,9 @@ export default function App() {
   function handleEvidenceUpload(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!isAllowedEvidence(file.name)) {
+    if (!isAllowedEvidence(file)) {
       setEvidenceFile("");
-      setError("Blocked unsafe file type. Allowed: jpg, png, pdf, txt, mp3, wav, m4a.");
+      setError("Blocked file. Allowed: jpg, png, pdf, txt, mp3, wav, m4a up to 15 MB.");
       return;
     }
     setEvidenceFile(file.name);
@@ -1092,7 +537,6 @@ export default function App() {
 
   function updateCase(caseId, field, value) {
     const reviewedAt = new Date().toISOString();
-    let updatedCase = null;
     const nextCases = cases.map((item) => {
       if (item.case_id !== caseId) return item;
       const investigation = {
@@ -1104,53 +548,13 @@ export default function App() {
       const timeline = field === "status"
         ? [...item.timeline, { label: `Marked ${value}`, time: reviewedAt }]
         : item.timeline;
-      updatedCase = { ...item, investigation, timeline };
-      return updatedCase;
+      return { ...item, investigation, timeline };
     });
     setCases(nextCases);
     saveCases(nextCases);
-    if (updatedCase) {
-      patchBackendCase(caseId, {
-        status: updatedCase.investigation.status,
-        note: updatedCase.investigation.note,
-        reviewed_by: updatedCase.investigation.reviewed_by,
-      }, session?.token)
-        .then((data) => {
-          if (!data.case) return;
-          const synced = nextCases.map((item) => item.case_id === caseId ? data.case : item);
-          setCases(synced);
-          saveCases(synced);
-        })
-        .catch(() => {});
-    }
   }
 
   function caseReportText(item) {
-    const qr = item.ai_result?.qr_analysis || null;
-    const identity = qr?.identity_check || qr?.identity || null;
-    const tamper = qr?.tamper_check || null;
-    const qrLines = qr ? [
-      "",
-      "QR Analysis:",
-      `QR Fingerprint: ${qr.fingerprint || "Not generated"}`,
-      `Recipient / UPI ID: ${qr.upi_id || identity?.upi_id || "Not found"}`,
-      `Recipient Name: ${identity?.recipient_name || qr.merchant || "Not found"}`,
-      `Phone (from UPI): ${identity?.phone_number || "Not found"}`,
-      `Amount: ${qr.amount || "Not found"}`,
-      `Payment Note: ${qr.note || identity?.payment_note || "Not found"}`,
-      `Consistency: ${identity?.consistency_state || "Not assessed"}`,
-      `Recipient Reputation: ${qr.recipient_reputation || "Unknown"}`,
-      `Previous BharatSHIELD Reports: ${qr.previous_reports ?? 0}`,
-      ...(tamper?.tamper_detected ? [
-        "",
-        "Tamper Check:",
-        `Status: ${tamper.change_status}`,
-        `Severity: ${tamper.severity}`,
-        `Summary: ${tamper.summary || tamper.explanation}`,
-        ...(tamper.changes?.length ? ["Changes Detected:", ...tamper.changes.map((change) => `- ${change.field}: ${change.previous} -> ${change.current}`)] : []),
-      ] : []),
-      ...(qr.risk_signals?.length ? ["Risk Signals:", ...qr.risk_signals.map((signal) => `- ${signal}`)] : []),
-    ] : [];
     return [
       "BHARATSHIELD",
       "Security Investigation Report",
@@ -1167,7 +571,6 @@ export default function App() {
       "",
       "Detection Reasons:",
       ...(item.ai_result.reasons.length ? item.ai_result.reasons : ["No major risk signals found."]).map((reason) => `- ${reason}`),
-      ...qrLines,
       "",
       `Investigation Status: ${item.investigation.status}`,
       `Investigator Note: ${item.investigation.note || "No note added."}`,
@@ -1199,25 +602,15 @@ export default function App() {
       downloadBlob(html, `${item.case_id}.html`, "text/html");
       return;
     }
-    fetch(`${API_BASE}/api/cases/${encodeURIComponent(item.case_id)}/report.pdf`, {
-      headers: authHeaders(session?.token),
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error("PDF unavailable.");
-        return response.blob();
-      })
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `${item.case_id}.pdf`;
-        link.click();
-        URL.revokeObjectURL(url);
-      })
-      .catch(() => {
-        downloadBlob(html, `${item.case_id}.html`, "text/html");
-      });
-    return;
+    const reportWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (reportWindow) {
+      reportWindow.document.write(html);
+      reportWindow.document.close();
+      reportWindow.focus();
+      reportWindow.print();
+    } else {
+      downloadBlob(html, `${item.case_id}.html`, "text/html");
+    }
   }
 
   function downloadBlob(text, filename, type) {
@@ -1271,34 +664,38 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Authentication failed.");
-      upsertLocalUser(data.user, cleanForm.password);
       saveSession(data);
       setSession(data);
+      setAuthForm({ name: "", email: "", password: "" });
       setShowAuth(false);
     } catch (err) {
-      try {
-        const localSession = localAuth(authMode, cleanForm);
-        saveSession(localSession);
-        setSession(localSession);
-        setShowAuth(false);
-      } catch (localErr) {
-        setAuthError(localErr.message || err.message || "Authentication failed.");
-      }
+      setAuthError(err.message || "Authentication failed. Make sure the BharatSHIELD API is running.");
     } finally {
       setAuthLoading(false);
     }
   }
 
-  function logout() {
-    localStorage.removeItem("bharatshield_session");
+  async function logout() {
+    const token = session?.token;
+    sessionStorage.removeItem("bharatshield_session");
     setSession(null);
     setShowAuth(true);
     setProfileOpen(false);
+    if (token) {
+      try {
+        await fetch(`${API_BASE}/api/logout`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // Local session is already cleared even if the API is unreachable.
+      }
+    }
   }
 
-  const recommendations = displayResult?.recommendations || result?.recommendations || [
+  const recommendations = result?.recommendations || [
     "Do not click unknown links or open unexpected attachments.",
     "Never share OTP, UPI PIN, passwords, or card details.",
     "Verify through the official app or website by typing the address yourself.",
@@ -1309,14 +706,29 @@ export default function App() {
   const isUrlMode = mode === "url";
   const isTextMode = !isQrMode && !isCallMode && !isUrlMode;
   const analyzeLabel = isQrMode ? "Analyze QR" : isCallMode ? "Analyze Call" : isUrlMode ? "Analyze Website" : "Analyze Threat";
-  const qrIdentityCheck = displayResult?.qr_analysis?.identity_check;
-  const qrTamper = displayResult?.qr_analysis?.tamper_check;
-  const qrIdentity = displayResult?.qr_analysis?.identity;
-  const complaintSummary = displayResult ? `${displayResult.scam_type} suspected with ${score}% risk. Evidence: ${content.slice(0, 180)}` : "Select a report type and add evidence to prepare a complaint summary.";
+  const complaintSummary = result ? `${result.scam_type} suspected with ${score}% risk. Evidence: ${content.slice(0, 180)}` : "Select a report type and add evidence to prepare a complaint summary.";
 
   return (
     <>
-      {showLanding && <CinematicLanding />}
+      {showLanding && (
+        <section className="landing-screen">
+          <div className="circuit-field circuit-left" />
+          <div className="circuit-field circuit-right" />
+          <div className="landing-center">
+            <HeroShield />
+            <h1 className="landing-title">BHARAT<span>SHIELD</span></h1>
+            <p className="landing-tagline">PROTECTING INDIA&apos;S DIGITAL FUTURE</p>
+          </div>
+          <div className="india-skyline" />
+          <div className="tricolor-clouds" />
+          <div className="landing-footer">
+            <p>India Focused. Safety First.</p>
+            <div className="real-loader" aria-label="Loading dashboard">
+              <span />
+            </div>
+          </div>
+        </section>
+      )}
 
       {!showLanding && showAuth && (
         <section className="auth-screen">
@@ -1405,7 +817,7 @@ export default function App() {
               <p>{activeSection === "Dashboard" ? "Stay alert, stay safe from digital scams." : "Manage your digital safety here."}</p>
             </div>
             <div className="header-icons">
-              <button type="button" onClick={() => setActiveSection("Scam Awareness")}>Alerts</button>
+              <button type="button" onClick={() => setActiveSection("Live Scam Alerts")}>Alerts</button>
               <div className="profile-menu">
                 <button type="button" title={session.user?.name || "User"} onClick={() => setProfileOpen((open) => !open)}>
                   {(session.user?.name || "User").slice(0, 1).toUpperCase()}
@@ -1424,10 +836,10 @@ export default function App() {
           </header>
 
           <section className={activeSection === "Dashboard" ? "stat-strip" : "stat-strip section-hidden"}>
-            <div><span>Safety Score</span><strong>{dashboardSafetyScore}</strong><small>Higher is safer</small></div>
-            <div><span>Threats Detected</span><strong>{Math.max(caseCounts.suspected + caseCounts.review, history.filter((item) => (item.score || 0) >= 55).length)}</strong><small>From this workspace</small></div>
-            <div><span>Reports Ready</span><strong>{cases.length}</strong><small>Security cases</small></div>
-            <div><span>Latest Alert</span><strong>Digital Arrest</strong><small>Awareness item</small></div>
+            <div><span>Safety Score</span><strong>{safetyScore}</strong><small>Higher is safer</small></div>
+            <div><span>Money Protected</span><strong>INR 11,158 Cr</strong><small>Latest public update</small></div>
+            <div><span>Weekly Risk Trend</span><strong>{score >= 70 ? "Rising" : "Stable"}</strong><small>Based on scan history</small></div>
+            <div><span>Latest Scam Alert</span><strong>Digital Arrest</strong><small>High priority</small></div>
           </section>
 
           <section className={activeSection === "Dashboard" ? "activity-strip" : "activity-strip section-hidden"}>
@@ -1469,7 +881,7 @@ export default function App() {
                     <strong>{item.case_id}</strong>
                   </div>
                   <h2>{item.type}</h2>
-                  <p className="case-input" title={item.input}>{item.input}</p>
+                  <p>{item.input}</p>
                   <div className="case-ai">
                     <div><span>AI Risk</span><strong>{item.ai_result.score}%</strong></div>
                     <div><span>Threat</span><strong>{item.ai_result.risk}</strong></div>
@@ -1600,10 +1012,7 @@ export default function App() {
                     )}
 
                     <div className="toolrow">
-                      <button className="primary" onClick={() => runAnalysis(content, mode)} disabled={loading}>{loading ? "Scanning..." : analyzeLabel}</button>
-                      {isQrMode && displayResult?.qr_analysis?.identity && (
-                        <button type="button" onClick={verifyAndSaveQr} disabled={loading}>Verify &amp; Save QR</button>
-                      )}
+                      <button className="primary" onClick={() => runAnalysis()} disabled={loading}>{loading ? "Scanning..." : analyzeLabel}</button>
                       <button onClick={() => setShowReport(true)}>Cyber Report</button>
                     </div>
                     {error && <p className="error">{error}</p>}
@@ -1618,10 +1027,10 @@ export default function App() {
                 </div>
                 <div className="glass">
                   <h2>What We Found</h2>
-                  <p>{displayResult ? displayResult.what_we_found : "Run a scan to review links, urgency, sender intent, and credential risk."}</p>
+                  <p>{result ? result.what_we_found : "Run a scan to review links, urgency, sender intent, and credential risk."}</p>
                   <div className="simple-box">
                     <strong>Why It Is Dangerous</strong>
-                    <p>{displayResult?.why_dangerous || "Verify payment, bank, and account alerts only through official apps."}</p>
+                    <p>{result?.why_dangerous || "Verify payment, bank, and account alerts only through official apps."}</p>
                   </div>
                 </div>
                 <div className="glass">
@@ -1636,7 +1045,7 @@ export default function App() {
                 <div className="orbit-core">
                   <HeroShield />
                   <strong>Live Shield</strong>
-                  <span>{liveShieldStatus}</span>
+                  <span>{result ? `${score}% threat detected` : "Monitoring"}</span>
                 </div>
                 <i className="orbit-dot one" />
                 <i className="orbit-dot two" />
@@ -1644,27 +1053,26 @@ export default function App() {
               </section>
 
               <section className="glass result-focus">
-                <h2>{threatCardTitle}</h2>
-                <div className={`gauge ${riskColor(score)}`} style={{ "--score": gaugeScore }}>
+                <div className={`gauge ${riskColor(score)}`} style={{ "--score": score || 18 }}>
                   <div className="gauge-core">
-                    <strong>{scoreDisplay}</strong>
-                    <span>{riskLevelDisplay}</span>
+                    <strong>{score}%</strong>
+                    <span>{result?.risk || "Threat Level"}</span>
                   </div>
                 </div>
                 <div className="score-stack">
-                  <div><span>Confidence</span><strong>{confidenceDisplay}</strong></div>
-                  <div><span>Rule Engine</span><strong>{ruleScoreDisplay}</strong></div>
-                  <div><span>URL Analysis</span><strong>{urlScoreDisplay}</strong></div>
-                  <div><span>Safety Score</span><strong>{safetyScoreDisplay}</strong></div>
+                  <div><span>Confidence</span><strong>{confidence}%</strong></div>
+                  <div><span>Rule Engine</span><strong>{ruleScore}%</strong></div>
+                  <div><span>URL Analysis</span><strong>{urlScore}%</strong></div>
+                  <div><span>Safety Score</span><strong>{safetyScore}</strong></div>
                 </div>
               </section>
 
               <section className="glass ai-card">
                 <h2>BharatSHIELD Review</h2>
-                <p className="typing">{isAnalyzingCurrentMode ? "Analyzing current QR payload..." : displayResult ? displayResult.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
-                <ol>{(displayResult?.signals?.length ? displayResult.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
+                <p className="typing">{result ? result.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
+                <ol>{(result?.signals?.length ? result.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
                 <div className={`safety-seal ${riskColor(score)}`}>
-                  <strong>{isAnalyzingCurrentMode ? "Analyzing" : displayResult?.verification_failed ? "Review Required" : score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
+                  <strong>{score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
                   <span>Verified by BharatSHIELD</span>
                 </div>
               </section>
@@ -1675,7 +1083,7 @@ export default function App() {
             <div className="glass">
               <h2>Reason Breakdown</h2>
               <div className="reason-list">
-                {(displayResult?.reason_breakdown || [
+                {(result?.reason_breakdown || [
                   { label: "Message language", score: 0, why: "Waiting for scan." },
                   { label: "Urgency and pressure", score: 0, why: "Waiting for scan." },
                   { label: "Credential risk", score: 0, why: "Waiting for scan." },
@@ -1693,7 +1101,7 @@ export default function App() {
             <div className="glass">
               <h2>URL Intelligence</h2>
               <div className="intel-list">
-                {(displayResult?.url_checks?.length ? displayResult.url_checks : [{ domain: "No URL scanned", score: 0, checks: [{ label: "Status", result: "Paste or scan a URL to inspect domain reputation." }] }]).flatMap((url) => [
+                {(result?.url_checks?.length ? result.url_checks : [{ domain: "No URL scanned", score: 0, checks: [{ label: "Status", result: "Paste or scan a URL to inspect domain reputation." }] }]).flatMap((url) => [
                   <div key={`${url.domain}-score`}><span>{url.domain}</span><strong>{url.score}% risk</strong></div>,
                   ...(url.checks || []).slice(0, 5).map((check) => <div key={`${url.domain}-${check.label}`}><span>{check.label}</span><strong>{check.result}</strong></div>),
                   url.domain_age ? <div key={`${url.domain}-age`}><span>Domain age</span><strong>{url.domain_age}</strong></div> : null,
@@ -1703,76 +1111,15 @@ export default function App() {
             </div>
 
             <div className="glass">
-              <h2>{isQrPanel ? "QR Security Analysis" : "QR / Call Deep Check"}</h2>
-              {isQrPanel ? (
-                <div className="qr-security-panel">
-                  <div className="qr-section">
-                    <h3>Identity Check</h3>
-                    <div className="intel-list">
-                      <div><span>Recipient Name</span><strong>{qrIdentityCheck?.recipient_name || qrIdentity?.recipient_name || displayResult?.qr_analysis?.merchant || "Not found"}</strong></div>
-                      <div><span>UPI ID</span><strong>{qrIdentityCheck?.upi_id || displayResult?.qr_analysis?.upi_id || "Not found"}</strong></div>
-                      <div><span>Phone (from UPI)</span><strong>{qrIdentityCheck?.phone_number || qrIdentity?.phone_number || "Not found"}</strong></div>
-                      <div><span>Amount</span><strong>{qrIdentityCheck?.amount || displayResult?.qr_analysis?.amount || "Not found"}</strong></div>
-                      <div><span>Payment Note</span><strong>{qrIdentityCheck?.payment_note || displayResult?.qr_analysis?.note || "Not found"}</strong></div>
-                      <div><span>QR Fingerprint</span><strong>{qrIdentityCheck?.fingerprint || displayResult?.qr_analysis?.fingerprint || "Not generated"}</strong></div>
-                      <div><span>Consistency</span><strong className={qrTamper?.tamper_detected ? "status-alert" : "status-ok"}>{qrIdentityCheck?.consistency_state || "Not assessed"}</strong></div>
-                      <div><span>Recipient Reputation</span><strong>{displayResult?.qr_analysis?.recipient_reputation || "Unknown"}</strong></div>
-                      <div><span>Previous Reports</span><strong>{displayResult?.qr_analysis?.previous_reports ?? 0}</strong></div>
-                    </div>
-                    {qrIdentityCheck?.ownership_disclaimer && (
-                      <p className="ownership-disclaimer">{qrIdentityCheck.ownership_disclaimer}</p>
-                    )}
-                  </div>
-
-                  {qrTamper?.tamper_detected ? (
-                    <div className={`tamper-alert severity-${qrTamper.severity || "medium"}`}>
-                      <h3>Changes Detected</h3>
-                      <strong>{qrTamper.headline || qrTamper.change_status}</strong>
-                      <p>{qrTamper.explanation || qrTamper.summary}</p>
-                      {qrTamper.changes?.length > 0 && (
-                        <ul className="tamper-changes">
-                          {qrTamper.changes.map((change) => (
-                            <li key={change.field}>
-                              <span>{change.field}</span>
-                              <strong>{change.previous} → {change.current}</strong>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="qr-section">
-                      <h3>Tamper Check</h3>
-                      <p>{qrTamper?.summary || "No previously user-verified QR baseline found for comparison."}</p>
-                    </div>
-                  )}
-
-                  <div className="qr-section">
-                    <h3>Recommendation</h3>
-                    <p>
-                      {qrTamper?.tamper_detected
-                        ? "This QR differs from your verified baseline. Confirm payee details inside your UPI app before paying."
-                        : displayResult?.qr_analysis?.recipient_reputation === "Unknown"
-                          ? "Recipient is unknown. Verify payee identity in your UPI app before approving payment."
-                          : "Verify recipient, amount, and purpose inside your UPI app before paying."}
-                    </p>
-                    {displayResult?.qr_analysis?.risk_signals?.length > 0 && (
-                      <p className="risk-signals">Risk signals: {displayResult.qr_analysis.risk_signals.join("; ")}</p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="intel-list">
-                  <div><span>Recipient</span><strong>{displayResult?.qr_analysis?.upi_id || "Not found"}</strong></div>
-                  <div><span>Merchant</span><strong>{displayResult?.qr_analysis?.merchant || "Not found"}</strong></div>
-                  <div><span>Amount</span><strong>{displayResult?.qr_analysis?.amount || "Not found"}</strong></div>
-                  <div><span>Payment Note</span><strong>{displayResult?.qr_analysis?.note || "Not found"}</strong></div>
-                  <div><span>Destination URL</span><strong>{displayResult?.qr_analysis?.destination_url || "Not found"}</strong></div>
-                  <div><span>Voice emotion</span><strong>{displayResult?.call_analysis?.emotion || "Not analyzed"}</strong></div>
-                  <div><span>Pressure score</span><strong>{displayResult?.call_analysis?.pressure_score ?? 0}%</strong></div>
-                  <div><span>Live warning</span><strong>{displayResult?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>
-                </div>
-              )}
+              <h2>QR / Call Deep Check</h2>
+              <div className="intel-list">
+                <div><span>UPI ID</span><strong>{result?.qr_analysis?.upi_id || "Not found"}</strong></div>
+                <div><span>Merchant</span><strong>{result?.qr_analysis?.merchant || "Not found"}</strong></div>
+                <div><span>Amount</span><strong>{result?.qr_analysis?.amount || "Not found"}</strong></div>
+                <div><span>Voice emotion</span><strong>{result?.call_analysis?.emotion || "Not analyzed"}</strong></div>
+                <div><span>Pressure score</span><strong>{result?.call_analysis?.pressure_score ?? 0}%</strong></div>
+                <div><span>Live warning</span><strong>{result?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>
+              </div>
             </div>
           </section>
 
@@ -1869,53 +1216,14 @@ export default function App() {
                     <div className="browser-bar"><span /> https://sbi-secure-login.example</div>
                     <div className="fake-page">
                       <strong>State Bank Secure Login</strong>
-                      <input
-                        type="tel"
-                        value={guardianForm.mobile}
-                        onChange={(event) => {
-                          const mobile = event.target.value.replace(/\D/g, "").slice(0, 10);
-                          setGuardianForm((form) => ({
-                            ...form,
-                            mobile,
-                            otp: mobile === form.mobile ? form.otp : "",
-                            sentOtp: "",
-                            otpSent: false,
-                          }));
-                        }}
-                        placeholder="Enter mobile number"
-                        inputMode="numeric"
-                        maxLength={10}
-                      />
-                      <div className="otp-row">
-                        <input
-                          type="text"
-                          value={guardianForm.otp}
-                          onChange={(event) => {
-                            const otp = event.target.value.replace(/\D/g, "").slice(0, 6);
-                            setGuardianForm((form) => ({ ...form, otp }));
-                          }}
-                          placeholder="Enter OTP"
-                          inputMode="numeric"
-                          maxLength={6}
-                        />
-                        <button
-                          type="button"
-                          disabled={!guardianOtp}
-                          onClick={() => setGuardianForm((form) => ({ ...form, sentOtp: guardianOtp, otpSent: true }))}
-                        >
-                          Send OTP
-                        </button>
-                      </div>
-                      <small>{guardianForm.otpSent ? `BharatSHIELD OTP sent to ${guardianMaskedMobile}` : "Enter a 10 digit number to receive OTP"}</small>
+                      <input readOnly value="Enter mobile number" />
+                      <input readOnly value="Enter OTP" />
                     </div>
                     <div className="guardian-overlay">
                       <span>HIGH RISK</span>
                       <h2>This site imitates SBI</h2>
-                      <p>{guardianForm.mobile || guardianForm.otp ? "Sensitive entry detected. Stop and use the official SBI app only." : "Do not enter mobile number, OTP, password, or UPI PIN on this page."}</p>
-                      <div className="toolrow compact-actions">
-                        <button className="danger-action" onClick={() => setGuardianForm({ mobile: "", otp: "", sentOtp: "", otpSent: false })}>Leave Site</button>
-                        <button onClick={() => setActiveSection("Scan")}>View Details</button>
-                      </div>
+                      <p>Do not enter mobile number, OTP, password, or UPI PIN on this page.</p>
+                      <div className="toolrow compact-actions"><button className="danger-action">Leave Site</button><button>View Details</button></div>
                     </div>
                   </div>
                   <div className="glass trust-meter-card">
@@ -2049,9 +1357,9 @@ export default function App() {
               </>
             )}
 
-            {activeSection === "Scam Awareness" && (
+            {activeSection === "Live Scam Alerts" && (
               <>
-                <div className="section-head wide-head"><h2>Scam Awareness Alerts</h2><button>Curated Alerts</button></div>
+                <div className="section-head wide-head"><h2>Live Scam Alerts</h2><button>Latest Alerts</button></div>
                 <div className="alerts-grid">
                   {liveAlerts.map(([title, risk, region, tip]) => (
                     <div className="glass alert-card" key={title}>
@@ -2110,7 +1418,7 @@ export default function App() {
                   <div className="glass">
                     <h2>Safe Uploads</h2>
                     <p>Allowed files: jpg, png, pdf, txt, mp3, wav, m4a. Executables, APKs, batch files, and zip archives are blocked.</p>
-                    <p className="secure-note">Files are only used for the selected scan or report draft in this demo flow.</p>
+                    <p className="secure-note">Files are reviewed locally in the browser flow and marked for deletion after {autoDelete}.</p>
                   </div>
                   <div className="glass">
                     <h2>Account Safety</h2>
@@ -2134,8 +1442,8 @@ export default function App() {
             <div className="report-grid">
               <div><span>Incident ID</span><strong>{incidentId}</strong></div>
               <div><span>Threat</span><strong>{result?.scam_type || "No scan yet"}</strong></div>
-              <div><span>Risk</span><strong>{scoreDisplay}</strong></div>
-              <div><span>Confidence</span><strong>{confidenceDisplay}</strong></div>
+              <div><span>Risk</span><strong>{score}%</strong></div>
+              <div><span>Confidence</span><strong>{confidence}%</strong></div>
             </div>
             <h3>Evidence</h3>
             <p>{content}</p>

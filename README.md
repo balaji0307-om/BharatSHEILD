@@ -2,7 +2,7 @@
 
 **AI-powered digital scam detection and response platform for India.**
 
-BharatSHIELD helps users inspect suspicious messages, links, QR codes, emails, job offers, investment pitches, fake news forwards, and call transcripts before they act on them. The platform combines an explainable AI layer with rule-based checks, URL inspection, QR parsing, evidence handling, safety recommendations, and a complaint-ready reporting flow.
+BharatSHIELD helps users inspect suspicious messages, links, QR codes, emails, job offers, investment pitches, fake news forwards, and call transcripts before they act on them. The platform combines explainable rule-based checks with optional Gemini analysis, URL inspection, QR parsing, safety recommendations, and a complaint-ready reporting flow.
 
 [Live Demo](https://bharatshield.onrender.com) | [Cyber Crime Portal](https://cybercrime.gov.in)
 
@@ -25,10 +25,9 @@ BharatSHIELD focuses on three outcomes:
 - Scans SMS, WhatsApp messages, emails, fake job posts, investment offers, and fake news forwards.
 - Checks suspicious URLs for phishing signals, brand impersonation, risky keywords, and unsafe patterns.
 - Decodes QR images and reviews QR payloads before opening payment or website links.
-- Blocks QR images that contain suspicious hidden payload markers such as script, command, executable, or extra container data.
 - Reviews call transcripts for OTP requests, threat language, urgency, and social engineering.
 - Generates a risk score, confidence score, evidence highlights, and recommended actions.
-- Creates backend-backed security cases with status tracking, notes, timelines, and export options.
+- Creates security cases with status tracking, notes, timelines, and export options.
 - Provides emergency guidance for active fraud situations, including helpline 1930 and cybercrime portal support.
 - Includes a Guardian page that demonstrates browser-style warning overlays for fake login pages.
 
@@ -69,7 +68,6 @@ The QR scanner is designed for safe preview first:
 - Upload QR image
 - Decode payload
 - Identify UPI ID, merchant name, amount, and suspicious notes
-- Generate a QR fingerprint and recipient reputation status
 - Detect risky payment or redirect patterns
 - Show recommendation before the user opens anything
 
@@ -93,18 +91,6 @@ The reporting flow helps users prepare complaint material:
 - Download complaint draft
 - Open the official cybercrime portal
 
-### Security Cases
-
-Every scan can create a structured security case:
-
-- Case ID
-- Owner email
-- AI verdict
-- Investigation status
-- Investigator notes
-- Evidence timeline
-- CSV, HTML, and PDF report export
-
 ### Emergency Help
 
 For active fraud situations, BharatSHIELD provides:
@@ -121,13 +107,14 @@ For active fraud situations, BharatSHIELD provides:
 
 BharatSHIELD is built with a privacy-first demo architecture:
 
-- User accounts use hashed passwords in the backend.
-- Security cases are stored in SQLite through FastAPI APIs.
-- CORS is configured for local and deployed Render origins.
+- User passwords are hashed with PBKDF2-HMAC-SHA256 and are never stored in browser localStorage.
+- Authenticated analysis endpoints require a server-side session token.
+- CORS uses an explicit allowlist; there is no wildcard Render-origin rule.
 - API rate limiting is included to reduce abuse.
 - Secure response headers are added by the backend.
-- Upload controls reject unsafe file types such as executables, APKs, batch files, and zip archives.
-- Uploaded evidence is used only for the selected scan or report draft in this demo flow.
+- Evidence selection is limited to approved media/document extensions and a 15 MB client-side size limit.
+- The current evidence flow stores the filename for report drafting; it does not upload the file to the API.
+- Sensitive evidence is treated as temporary review data in the user flow.
 - The app does not request contacts, photos, location, OTPs, passwords, or background microphone permissions for scanning.
 
 This project provides AI-assisted risk estimation for awareness and prevention. It is not an official cybersecurity verification service.
@@ -142,8 +129,7 @@ This project provides AI-assisted risk estimation for awareness and prevention. 
 | Backend | FastAPI, Python |
 | AI | Gemini API support with rule-engine fallback |
 | QR Analysis | jsQR and browser BarcodeDetector support |
-| Authentication | SQLite, password hashing, local demo fallback |
-| Case Reports | SQLite case store, CSV/HTML export, PDF endpoint |
+| Authentication | FastAPI sessions, SQLite, PBKDF2-HMAC-SHA256 |
 | Deployment | Render |
 | Version Control | Git and GitHub |
 
@@ -160,10 +146,9 @@ FastAPI Backend
     |
     |-- rule engine
     |-- optional Gemini analysis
-    |-- URL and QR checks
-    |-- authentication
-    |-- security case database
-    |-- PDF report endpoint
+    |-- heuristic URL and QR checks
+    |-- authenticated session API
+    |-- security case response
 ```
 
 ---
@@ -190,7 +175,7 @@ Create an environment variable only if you want Gemini-backed analysis:
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
-Without the key, BharatSHIELD still runs using the built-in rule engine.
+Without the key, BharatSHIELD still runs using the built-in heuristic rule engine. External Safe Browsing, VirusTotal, WHOIS/RDAP, and SSL certificate intelligence are not claimed unless those integrations are configured.
 
 ### 4. Start backend
 
@@ -220,7 +205,8 @@ For Render or similar hosting:
 - Set the frontend publish directory to `dist`.
 - Deploy the FastAPI backend separately if backend auth and API scanning are required.
 - Set `VITE_API_BASE_URL` to the deployed backend URL.
-- Add the frontend domain to `CORS_ORIGINS` for the backend.
+- Add only the exact frontend domain to `CORS_ORIGINS` for the backend.
+- Keep the SQLite database on a persistent Render disk, or migrate the auth store to managed PostgreSQL for multi-instance production deployment.
 
 ---
 
@@ -243,7 +229,7 @@ For Render or similar hosting:
 - Stronger domain reputation checks
 - Real-time phishing page comparison
 - Community scam reputation database
-- Evidence snapshots in generated reports
+- PDF complaint generation with evidence snapshots
 - Multi-language safety guidance
 
 ---
@@ -253,3 +239,4 @@ For Render or similar hosting:
 **Care Coders**
 
 Built for hackathon demonstration with a focus on practical cyber safety, explainable AI, and user-first scam prevention.
+

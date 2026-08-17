@@ -3,54 +3,17 @@ import re
 import secrets
 import sqlite3
 import hashlib
-import json
-from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlparse
 from time import time
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-
-try:
-    from .qr_identity import (
-        build_identity_check,
-        build_identity_fingerprint,
-        build_identity_record,
-        compare_identity,
-        display_payee_name,
-        tamper_risk_boost,
-    )
-except ImportError:  # pragma: no cover - direct script/test imports
-    from qr_identity import (
-        build_identity_check,
-        build_identity_fingerprint,
-        build_identity_record,
-        compare_identity,
-        display_payee_name,
-        tamper_risk_boost,
-    )
-
-try:
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-except Exception:  # pragma: no cover - deployment installs reportlab, fallback keeps API alive locally.
-    A4 = None
-    getSampleStyleSheet = None
-    Paragraph = None
-    SimpleDocTemplate = None
-    Spacer = None
-
-try:
-    from fastapi.staticfiles import StaticFiles
-except Exception:  # pragma: no cover
-    StaticFiles = None
 
 
 app = FastAPI(title="BharatSHIELD")
@@ -58,15 +21,12 @@ app = FastAPI(title="BharatSHIELD")
 allowed_origins = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
-    "https://bharatshield.onrender.com",
-    "https://bharatsheild.onrender.com",
 ]
-allowed_origins.extend(origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip())
+allowed_origins.extend(origin.strip().rstrip("/") for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip())
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.onrender\.com",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,11 +37,6 @@ class AnalyzeRequest(BaseModel):
     content: str = Field(min_length=1)
     channel: str = "message"
     language: str = "en"
-    verified_baseline: dict[str, Any] | None = None
-
-
-class QrVerifyRequest(BaseModel):
-    content: str = Field(min_length=1)
 
 
 class UrlCheckRequest(BaseModel):
@@ -97,16 +52,6 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(min_length=5)
     password: str = Field(min_length=6)
-
-
-class CaseCreateRequest(BaseModel):
-    case: dict[str, Any]
-
-
-class CaseUpdateRequest(BaseModel):
-    status: str | None = None
-    note: str | None = None
-    reviewed_by: str | None = None
 
 
 DB_PATH = Path(__file__).with_name("bharatshield.db")
@@ -127,23 +72,18 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user',
                 created_at TEXT NOT NULL
             )
             """
         )
-        columns = [row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
-        if "role" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS security_cases (
-                case_id TEXT PRIMARY KEY,
-                owner_email TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                status TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                expires_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             """
         )
@@ -160,26 +100,46 @@ def verify_password(password: str, stored: str) -> bool:
     return secrets.compare_digest(hash_password(password, salt).split("$", 1)[1], expected)
 
 
-def make_token() -> str:
-    return secrets.token_urlsafe(32)
+SESSION_TTL_SECONDS = 60 * 60 * 24 * 7
 
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-SESSION_TOKENS: dict[str, dict[str, Any]] = {}
+def create_session(user_id: int) -> str:
+    token = secrets.token_urlsafe(48)
+    now = datetime.now(timezone.utc)
+    expires = datetime.fromtimestamp(now.timestamp() + SESSION_TTL_SECONDS, timezone.utc)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (hash_token(token), user_id, now.isoformat(), expires.isoformat()),
+        )
+    return token
 
-
-def create_session(user: dict[str, Any]) -> dict[str, Any]:
-    token = make_token()
-    SESSION_TOKENS[token] = user
-    return {"token": token, "user": user}
-
-
-def auth_user(request: Request) -> dict[str, Any]:
-    header = request.headers.get("authorization", "")
-    token = header.removeprefix("Bearer ").strip() if header.lower().startswith("bearer ") else ""
-    user = SESSION_TOKENS.get(token)
-    if not user:
-        raise HTTPException(status_code=401, detail="Login required.")
-    return user
+def get_current_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    token = authorization[7:].strip()
+    if not token or len(token) < 32:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT u.id, u.name, u.email, s.expires_at
+               FROM sessions s JOIN users u ON u.id = s.user_id
+               WHERE s.token_hash = ?""",
+            (hash_token(token),),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid or expired session.")
+    try:
+        expired = datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc)
+    except ValueError:
+        expired = True
+    if expired:
+        with get_db() as conn:
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
+        raise HTTPException(status_code=401, detail="Session expired. Please login again.")
+    return {"id": row["id"], "name": row["name"], "email": row["email"]}
 
 
 init_db()
@@ -203,9 +163,15 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    if request.url.path.startswith("/api/"):
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
+    response.headers["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()"
+    api_origin = str(request.base_url).rstrip("/")
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "connect-src 'self' " + api_origin + " https://generativelanguage.googleapis.com; "
+        "img-src 'self' data: blob:; media-src 'self' blob:; "
+        "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
@@ -240,10 +206,6 @@ SUSPICIOUS_KEYWORDS = {
     "paytm": 6,
     "amazon hiring": 14,
     "income daily": 14,
-    "javascript:": 26,
-    "<script": 26,
-    "powershell": 24,
-    "cmd.exe": 24,
 }
 
 KEYWORD_EXPLANATIONS = {
@@ -263,10 +225,6 @@ KEYWORD_EXPLANATIONS = {
     "click here": "Generic click prompts often hide phishing destinations.",
     "account suspended": "Suspension threats are a classic phishing pressure tactic.",
     "upi": "UPI links or collect requests can trigger unwanted payment flows.",
-    "javascript:": "QR codes or links should not contain executable browser script.",
-    "<script": "Embedded script content is unsafe in QR or message payloads.",
-    "powershell": "Command text inside user-facing content is a strong abuse signal.",
-    "cmd.exe": "Command shell markers indicate unsafe executable intent.",
 }
 
 HINDI_KEYWORDS = {
@@ -294,8 +252,6 @@ SCAM_TYPES = [
 
 URL_PATTERN = re.compile(r"https?://[^\s]+|www\.[^\s]+", re.IGNORECASE)
 PHONE_PATTERN = re.compile(r"(\+91[-\s]?)?[6-9]\d{9}")
-SUSPICIOUS_UPI_TERMS = ("fake", "refund", "support", "verify", "kyc", "helpdesk", "customer")
-PRESSURE_TERMS = ("kyc", "refund", "verify", "blocked", "fee", "urgent", "registration")
 
 
 def clamp(value: int) -> int:
@@ -311,8 +267,8 @@ def extract_urls(text: str) -> list[str]:
 
 def estimate_domain_age(domain: str) -> str:
     if any(flag in domain for flag in ("amaz0n", "verify", "kyc", "login", "claim", "gift")) or domain.endswith((".xyz", ".top", ".click")):
-        return "Estimated new or throwaway domain"
-    return "No recent-registration signal found"
+        return "Heuristic: domain may be disposable or suspicious"
+    return "Not independently checked (WHOIS/RDAP API not connected)"
 
 
 def similarity_hint(domain: str) -> dict[str, Any] | None:
@@ -328,179 +284,43 @@ def similarity_hint(domain: str) -> dict[str, Any] | None:
     return None
 
 
-def count_previous_payee_reports(upi_id: str, fingerprint: str) -> int:
-    if not upi_id:
-        return 0
-    upi_key = upi_id.strip().lower()
-    count = 0
-    with get_db() as conn:
-        rows = conn.execute("SELECT payload FROM security_cases").fetchall()
-    for row in rows:
-        try:
-            case = json.loads(row["payload"])
-        except Exception:
-            continue
-        qr = (case.get("ai_result") or {}).get("qr_analysis") or case.get("qr_analysis") or {}
-        case_upi = str(qr.get("upi_id") or "").strip().lower()
-        if case_upi and case_upi == upi_key:
-            count += 1
-            continue
-        case_input = str(case.get("input") or "").strip().lower()
-        if case_input.startswith("upi://") and f"pa={upi_key}" in case_input.replace("%40", "@"):
-            count += 1
-    return count
-
-
-def qr_fingerprint(parsed, upi_id: str, merchant: str, amount: str, notes: str, destination_url: str = "") -> str:
-    return build_identity_fingerprint(upi_id, merchant, amount, notes, destination_url)
-
-
-def inspect_qr_payload(text: str, verified_baseline: dict[str, Any] | None = None) -> dict[str, Any]:
-    raw = text.strip()
-    parsed = urlparse(raw)
+def inspect_qr_payload(text: str) -> dict[str, Any]:
+    parsed = urlparse(text.strip())
     qs = parse_qs(parsed.query)
     amount = qs.get("am", [""])[0]
     upi_id = qs.get("pa", [""])[0]
-    merchant = display_payee_name(qs.get("pn", [""])[0])
-    notes = unquote(qs.get("tn", [""])[0]).strip() if qs.get("tn", [""])[0] else ""
-    _, _, upi_handle = upi_id.partition("@")
-    lowered_payload = " ".join([raw, upi_id, merchant, notes]).lower()
-    destination_url = raw if parsed.scheme in {"http", "https"} else ""
-    fingerprint = qr_fingerprint(parsed, upi_id, merchant, amount, notes, destination_url)
-    identity = build_identity_record(upi_id, merchant, amount, notes, destination_url)
-    tamper = compare_identity(identity, verified_baseline)
-    identity_check = build_identity_check(identity, tamper)
-    checks: list[dict[str, str]] = []
-    risk_signals: list[str] = []
-    score = 0
-    handle_unusual = False
+    merchant = qs.get("pn", [""])[0]
+    notes = qs.get("tn", [""])[0]
+    checks = []
+    score = 10
 
     if parsed.scheme == "upi":
-        checks.append({"label": "Payload", "result": "Valid UPI payment intent"})
-    elif parsed.scheme in {"http", "https"}:
-        checks.append({"label": "Payload", "result": "Website link inside QR"})
-        url_inspection = inspect_url(raw)
-        score += url_inspection["score"]
-        risk_signals.append("QR opens a website link")
-        checks.append({"label": "Destination URL", "result": destination_url})
-        if url_inspection["score"] >= 45:
-            risk_signals.append("Suspicious destination URL detected")
-        for check in url_inspection.get("checks", [])[:3]:
-            checks.append({"label": f"URL {check['label']}", "result": check["result"]})
-    elif raw:
-        checks.append({"label": "Payload", "result": "Non-UPI QR content"})
-        score += 6
-
+        checks.append({"label": "UPI payload", "result": "Payment intent detected"})
+        score += 18
     if upi_id:
-        upi_valid = bool(re.match(r"^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z][a-zA-Z0-9.\-_]{2,}$", upi_id))
-        checks.append({"label": "Recipient", "result": upi_id})
-        checks.append({"label": "UPI format", "result": "Valid structure" if upi_valid else "Invalid or unusual"})
-        if not upi_valid:
-            score += 18
-            risk_signals.append("Recipient UPI format is unusual")
-        if any(word in upi_id.lower() for word in SUSPICIOUS_UPI_TERMS):
-            score += 24
-            risk_signals.append("Recipient name contains support/refund/KYC terms")
-        handle_unusual = bool(upi_handle) and (
-            not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9.\-_]{2,}", upi_handle)
-            or any(word in upi_handle.lower() for word in SUSPICIOUS_UPI_TERMS)
-        )
-        if handle_unusual:
-            score += 14
-            risk_signals.append("UPI provider handle is malformed or unusual")
-    elif parsed.scheme == "upi":
-        score += 22
-        risk_signals.append("UPI QR has no recipient field")
-
+        checks.append({"label": "UPI ID", "result": upi_id})
+        if any(word in upi_id.lower() for word in ("fake", "refund", "support", "verify")):
+            score += 20
     if amount:
         checks.append({"label": "Amount", "result": f"INR {amount}"})
-        try:
-            amount_value = float(amount)
-        except ValueError:
-            score += 8
-            risk_signals.append("Amount is not a clean number")
-        else:
-            if amount_value >= 5000:
-                score += 16
-                risk_signals.append("High payment amount")
-            elif amount_value >= 1000:
-                score += 10
-                risk_signals.append("Moderate payment amount")
-    else:
-        checks.append({"label": "Amount", "result": "Not prefilled"})
-
+        score += 12
     if merchant:
         checks.append({"label": "Merchant name", "result": merchant})
-        if any(word in merchant.lower() for word in ("refund", "support", "kyc", "verification", "bank", "helpdesk")):
-            score += 20
-            risk_signals.append("Merchant name uses refund/support/KYC terms")
-    else:
-        checks.append({"label": "Merchant name", "result": "Not provided"})
-
     if notes:
         checks.append({"label": "Payment note", "result": notes})
-        if any(word in notes.lower() for word in PRESSURE_TERMS):
-            score += 22
-            risk_signals.append("Payment note contains pressure or verification terms")
-    else:
-        checks.append({"label": "Payment note", "result": "Not provided"})
-
-    if any(word in lowered_payload for word in ("otp", "pin", "password")):
-        score += 26
-        risk_signals.append("QR payload references OTP/PIN/password")
-
-    if tamper.get("tamper_detected"):
-        tamper_boost = tamper_risk_boost(tamper)
-        score += tamper_boost
-        risk_signals.append(tamper.get("change_status", "QR payload changed from verified baseline"))
-        if tamper.get("headline"):
-            risk_signals.append(tamper["headline"])
-
-    previous_reports = count_previous_payee_reports(upi_id, fingerprint)
-    if previous_reports:
-        score += min(30, 12 + previous_reports * 6)
-        risk_signals.append(f"Recipient matched {previous_reports} previous BharatSHIELD case(s)")
-    checks.append({"label": "Previous BharatSHIELD reports", "result": str(previous_reports)})
-    checks.append({"label": "QR fingerprint", "result": fingerprint})
+        if any(word in notes.lower() for word in ("kyc", "refund", "verify")):
+            score += 14
 
     if not checks:
         checks.append({"label": "QR content", "result": "No UPI/payment fields detected"})
-
-    recipient_specific_suspicion = previous_reports > 0 or (
-        bool(upi_id)
-        and (
-            any(word in upi_id.lower() for word in SUSPICIOUS_UPI_TERMS)
-            or handle_unusual
-        )
-    )
-    if recipient_specific_suspicion:
-        reputation = "Suspicious"
-        checks.append({"label": "Recipient reputation", "result": "Suspicious pattern"})
-    elif upi_id and risk_signals:
-        reputation = "Review"
-        checks.append({"label": "Recipient reputation", "result": "Needs manual verification"})
-    elif upi_id:
-        reputation = "Unknown"
-        checks.append({"label": "Recipient reputation", "result": "Unknown — not verified safe"})
-    else:
-        reputation = "Not applicable"
 
     return {
         "score": clamp(score),
         "upi_id": upi_id or "Not found",
         "merchant": merchant or "Not found",
         "amount": amount or "Not found",
-        "note": notes or "Not found",
-        "destination_url": destination_url or "Not found",
-        "recipient_reputation": reputation,
-        "previous_reports": previous_reports,
-        "fingerprint": fingerprint,
-        "risk_signals": risk_signals,
         "hidden_redirect": parsed.scheme in {"http", "https"} and bool(parsed.netloc),
         "checks": checks,
-        "identity": identity,
-        "identity_check": identity_check,
-        "tamper_check": tamper,
     }
 
 
@@ -522,10 +342,32 @@ def rule_analysis(text: str, channel: str = "message") -> dict[str, Any]:
     signals: list[dict[str, str]] = []
     urls = extract_urls(text)
 
+    # Context matters: educational/warning statements mentioning OTP/PIN are not
+    # themselves credential theft. Only score credential terms strongly when the
+    # message appears to request, share, or collect the secret.
+    warning_context = bool(re.search(
+        r"\b(never|don't|do not|dont|avoid|beware|warning|fraud|scam|share with no one|कभी|\u0928\u0939\u0940)\b",
+        lowered,
+    ))
+    credential_request = bool(re.search(
+        r"\b(share|send|tell|enter|provide|submit|confirm|give|forward|type)\b.{0,45}\b(otp|pin|password|passcode|cvv|card number|verification code)\b|\b(otp|pin|password|passcode|cvv)\b.{0,45}\b(share|send|tell|enter|provide|submit|confirm|give)\b",
+        lowered,
+    ))
+    if warning_context and re.search(r"\b(never|do not|don't|dont|avoid)\b.{0,30}\b(share|send|tell|enter|provide|give)\b", lowered):
+        credential_request = False
+
     for keyword, weight in {**SUSPICIOUS_KEYWORDS, **HINDI_KEYWORDS}.items():
         if keyword in lowered:
-            score += weight
-            signals.append({"label": keyword, "reason": KEYWORD_EXPLANATIONS.get(keyword, "High-risk scam language detected")})
+            adjusted_weight = weight
+            if keyword in {"otp", "pin", "password"} and warning_context and not credential_request:
+                adjusted_weight = 0
+            if adjusted_weight:
+                score += adjusted_weight
+                signals.append({"label": keyword, "reason": KEYWORD_EXPLANATIONS.get(keyword, "High-risk scam language detected")})
+
+    if credential_request:
+        score += 24
+        signals.append({"label": "Credential request", "reason": "The message appears to ask the user to disclose a secret such as an OTP, PIN, password, or code."})
 
     if urls:
         score += 14
@@ -568,13 +410,13 @@ def rule_analysis(text: str, channel: str = "message") -> dict[str, Any]:
             "urgency": urgency_score,
             "emotional_manipulation": emotional_score,
             "pressure": pressure_score,
-            "credential_request": 92 if any(word in lowered for word in ("otp", "pin", "password")) else 12,
+            "credential_request": 92 if credential_request else 8,
         },
         "call_analysis": {
             "emotion": emotion,
             "pressure_score": pressure_score,
-            "otp_demand": "otp" in lowered or "code" in lowered,
-            "live_warning": pressure_score >= 45 or "otp" in lowered,
+            "otp_demand": credential_request,
+            "live_warning": pressure_score >= 45 or credential_request,
         },
     }
 
@@ -585,7 +427,11 @@ def inspect_url(raw_url: str) -> dict[str, Any]:
         url = "https://" + url
 
     parsed = urlparse(url)
-    domain = parsed.netloc.lower()
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Enter a valid HTTP/HTTPS URL.")
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="URLs containing embedded credentials are not accepted.")
+    domain = parsed.hostname.lower().rstrip(".")
     score = 12
     checks: list[dict[str, str]] = []
 
@@ -636,9 +482,9 @@ def inspect_url(raw_url: str) -> dict[str, Any]:
         "domain": domain,
         "score": clamp(score),
         "domain_age": estimate_domain_age(domain),
-        "ssl_expiry": "Certificate review recommended",
-        "safe_browsing": "Suspicious indicators found" if score >= 45 else "No obvious block signal",
-        "virustotal": "Local reputation checks applied",
+        "ssl_expiry": "Not independently checked",
+        "safe_browsing": "Heuristic review only — Safe Browsing API not connected",
+        "virustotal": "Heuristic review only — VirusTotal API not connected",
         "brand_similarity": similarity,
         "checks": checks,
     }
@@ -688,303 +534,60 @@ def signup(request: SignupRequest) -> dict[str, Any]:
     try:
         with get_db() as conn:
             conn.execute(
-                "INSERT INTO users (name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",
-                (name, email, hash_password(request.password), "user", datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (name, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (name, email, hash_password(request.password), datetime.now(timezone.utc).isoformat()),
             )
-            row = conn.execute("SELECT id, name, email, role FROM users WHERE email = ?", (email,)).fetchone()
+            row = conn.execute("SELECT id, name, email FROM users WHERE email = ?", (email,)).fetchone()
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="This email is already signed up. Please login.")
 
-    session = create_session({"id": row["id"], "name": row["name"], "email": row["email"], "role": row["role"]})
-    return {**session, "message": "Signup successful."}
+    return {
+        "token": create_session(row["id"]),
+        "user": {"id": row["id"], "name": row["name"], "email": row["email"]},
+        "message": "Signup successful.",
+    }
 
 
 @app.post("/api/login")
 def login(request: LoginRequest) -> dict[str, Any]:
     email = request.email.strip().lower()
     with get_db() as conn:
-        row = conn.execute("SELECT id, name, email, role, password_hash FROM users WHERE email = ?", (email,)).fetchone()
+        row = conn.execute("SELECT id, name, email, password_hash FROM users WHERE email = ?", (email,)).fetchone()
 
     if not row or not verify_password(request.password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="No signed-up user found with these credentials.")
 
-    session = create_session({"id": row["id"], "name": row["name"], "email": row["email"], "role": row["role"]})
-    return {**session, "message": "Login successful."}
-
-
-def normalize_case(case: dict[str, Any]) -> dict[str, Any]:
-    case_id = str(case.get("case_id") or f"BS-{secrets.randbelow(9000) + 1000}")
-    owner = str(case.get("owner") or "local-user").strip().lower()
-    now = datetime.now(timezone.utc).isoformat()
-    investigation = case.get("investigation") if isinstance(case.get("investigation"), dict) else {}
-    status = str(investigation.get("status") or case.get("status") or "Suspected")
-    timeline = case.get("timeline") if isinstance(case.get("timeline"), list) else []
-    if not timeline:
-        timeline = [{"label": "Case created", "time": now}]
     return {
-        **case,
-        "case_id": case_id,
-        "owner": owner,
-        "investigation": {
-            "status": status,
-            "note": investigation.get("note") or "",
-            "reviewed_by": investigation.get("reviewed_by"),
-            "reviewed_at": investigation.get("reviewed_at"),
-        },
-        "timeline": timeline,
-        "created_at": case.get("created_at") or now,
+        "token": create_session(row["id"]),
+        "user": {"id": row["id"], "name": row["name"], "email": row["email"]},
+        "message": "Login successful.",
     }
 
 
-def save_security_case(case: dict[str, Any]) -> dict[str, Any]:
-    normalized = normalize_case(case)
-    now = datetime.now(timezone.utc).isoformat()
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO security_cases (case_id, owner_email, payload, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(case_id) DO UPDATE SET
-                owner_email = excluded.owner_email,
-                payload = excluded.payload,
-                status = excluded.status,
-                updated_at = excluded.updated_at
-            """,
-            (
-                normalized["case_id"],
-                normalized["owner"],
-                json.dumps(normalized),
-                normalized["investigation"]["status"],
-                normalized["created_at"],
-                now,
-            ),
-        )
-    return normalized
+@app.get("/api/me")
+def me(current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    return {"user": current_user}
 
 
-def get_security_case(case_id: str) -> dict[str, Any] | None:
-    with get_db() as conn:
-        row = conn.execute("SELECT payload FROM security_cases WHERE case_id = ?", (case_id,)).fetchone()
-    return json.loads(row["payload"]) if row else None
-
-
-def case_text(case: dict[str, Any]) -> str:
-    ai = case.get("ai_result", {})
-    investigation = case.get("investigation", {})
-    timeline = case.get("timeline", [])
-    reasons = ai.get("reasons") or ["No major risk signals found."]
-    qr = ai.get("qr_analysis") or case.get("qr_analysis") or {}
-    qr_lines = []
-    if qr:
-        identity = qr.get("identity_check") or qr.get("identity") or {}
-        tamper = qr.get("tamper_check") or {}
-        qr_lines = [
-            "",
-            "QR Analysis:",
-            f"QR Fingerprint: {qr.get('fingerprint') or 'Not generated'}",
-            f"Recipient / UPI ID: {qr.get('upi_id') or identity.get('upi_id') or 'Not found'}",
-            f"Recipient Name: {identity.get('recipient_name') or qr.get('merchant') or 'Not found'}",
-            f"Phone (from UPI): {identity.get('phone_number') or 'Not found'}",
-            f"Amount: {qr.get('amount') or 'Not found'}",
-            f"Payment Note: {qr.get('note') or identity.get('payment_note') or 'Not found'}",
-            f"Consistency: {identity.get('consistency_state') or 'Not assessed'}",
-            f"Destination URL: {qr.get('destination_url') or 'Not found'}",
-            f"Recipient Reputation: {qr.get('recipient_reputation') or 'Unknown'}",
-            f"Previous BharatSHIELD Reports: {qr.get('previous_reports', 0)}",
-            f"Risk Signals: {', '.join(qr.get('risk_signals') or []) or 'None'}",
-        ]
-        if tamper.get("tamper_detected"):
-            qr_lines.extend([
-                "",
-                "Tamper Check:",
-                f"Status: {tamper.get('change_status')}",
-                f"Severity: {tamper.get('severity')}",
-                f"Summary: {tamper.get('summary') or tamper.get('explanation')}",
-            ])
-            for change in tamper.get("changes") or []:
-                qr_lines.append(f"- {change.get('field')}: {change.get('previous')} -> {change.get('current')}")
-    return "\n".join([
-        "BharatSHIELD Security Investigation Report",
-        "",
-        f"Case ID: {case.get('case_id')}",
-        f"Threat Type: {case.get('type')}",
-        f"Channel: {case.get('channel')}",
-        f"Detected Content: {case.get('input')}",
-        f"Risk Level: {ai.get('risk')}",
-        f"Risk Score: {ai.get('score')}%",
-        f"Confidence: {ai.get('confidence')}%",
-        "",
-        "AI Analysis:",
-        str(ai.get("explanation") or "Security review completed."),
-        "",
-        "Detection Reasons:",
-        *[f"- {reason}" for reason in reasons],
-        *qr_lines,
-        "",
-        f"Investigation Status: {investigation.get('status')}",
-        f"Investigator Note: {investigation.get('note') or 'No note added.'}",
-        f"Reviewed By: {investigation.get('reviewed_by') or 'Not reviewed'}",
-        "",
-        "Evidence Timeline:",
-        *[f"- {item.get('time')}: {item.get('label')}" for item in timeline],
-        "",
-        "Recommendation:",
-        "Do not share OTP, PIN, passwords, card details, or approve unknown payment requests.",
-        "",
-        "Generated by BharatSHIELD",
-    ])
-
-
-def minimal_pdf_bytes(text: str) -> bytes:
-    safe = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-    lines = safe.splitlines()[:48]
-    stream = "BT /F1 11 Tf 42 790 Td " + " T* ".join(f"({line}) Tj" for line in lines) + " ET"
-    objects = [
-        "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
-        "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
-        "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj",
-        "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
-        f"5 0 obj << /Length {len(stream.encode('latin-1', 'ignore'))} >> stream\n{stream}\nendstream endobj",
-    ]
-    pdf = "%PDF-1.4\n"
-    offsets = [0]
-    for obj in objects:
-        offsets.append(len(pdf.encode("latin-1")))
-        pdf += obj + "\n"
-    xref = len(pdf.encode("latin-1"))
-    pdf += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n"
-    pdf += "".join(f"{offset:010d} 00000 n \n" for offset in offsets[1:])
-    pdf += f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
-    return pdf.encode("latin-1", "ignore")
-
-
-def render_case_pdf(case: dict[str, Any]) -> bytes:
-    text = case_text(case)
-    if not SimpleDocTemplate:
-        return minimal_pdf_bytes(text)
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, title=f"{case.get('case_id')} BharatSHIELD Report")
-    styles = getSampleStyleSheet()
-    story = [
-        Paragraph("BharatSHIELD Security Investigation Report", styles["Title"]),
-        Spacer(1, 12),
-    ]
-    for line in text.splitlines()[2:]:
-        story.append(Paragraph(line or "&nbsp;", styles["BodyText"]))
-        story.append(Spacer(1, 4))
-    doc.build(story)
-    return buffer.getvalue()
-
-
-@app.get("/api/cases")
-def list_cases(request: Request, owner: str | None = None) -> dict[str, Any]:
-    user = auth_user(request)
-    role = user.get("role", "user")
-    if role == "user":
-        owner = user["email"]
-    query = "SELECT payload FROM security_cases"
-    params: tuple[Any, ...] = ()
-    if owner:
-        query += " WHERE owner_email = ?"
-        params = (owner.strip().lower(),)
-    query += " ORDER BY updated_at DESC LIMIT 100"
-    with get_db() as conn:
-        rows = conn.execute(query, params).fetchall()
-    return {"cases": [json.loads(row["payload"]) for row in rows]}
-
-
-@app.post("/api/cases")
-def create_case(payload: CaseCreateRequest, request: Request) -> dict[str, Any]:
-    user = auth_user(request)
-    case = {**payload.case, "owner": user["email"]}
-    return {"case": save_security_case(case)}
-
-
-@app.patch("/api/cases/{case_id}")
-def update_case_api(case_id: str, payload: CaseUpdateRequest, request: Request) -> dict[str, Any]:
-    user = auth_user(request)
-    case = get_security_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found.")
-    if user.get("role") == "user" and case.get("owner") != user.get("email"):
-        raise HTTPException(status_code=403, detail="You can only update your own cases.")
-    reviewed_at = datetime.now(timezone.utc).isoformat()
-    investigation = case.get("investigation", {})
-    if payload.status:
-        investigation["status"] = payload.status
-        case["timeline"] = [*case.get("timeline", []), {"label": f"Marked {payload.status}", "time": reviewed_at}]
-    if payload.note is not None:
-        investigation["note"] = payload.note
-    investigation["reviewed_by"] = payload.reviewed_by or user.get("name") or investigation.get("reviewed_by")
-    investigation["reviewed_at"] = reviewed_at
-    case["investigation"] = investigation
-    return {"case": save_security_case(case)}
-
-
-@app.get("/api/cases/{case_id}/report.pdf")
-def case_report_pdf(case_id: str, request: Request) -> Response:
-    user = auth_user(request)
-    case = get_security_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found.")
-    if user.get("role") == "user" and case.get("owner") != user.get("email"):
-        raise HTTPException(status_code=403, detail="You can only download your own case reports.")
-    pdf = render_case_pdf(case)
-    return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{case_id}.pdf"'},
-    )
+@app.post("/api/logout")
+def logout(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:].strip()
+        if token:
+            with get_db() as conn:
+                conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
+    return {"message": "Logged out."}
 
 
 @app.post("/api/analyze")
-async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
-    is_qr = request.channel == "qr" or request.content.lower().startswith("upi://")
-
-    if is_qr:
-        qr_analysis = inspect_qr_payload(request.content, request.verified_baseline)
-        score = qr_analysis["score"]
-        signals = [{"label": "QR payment", "reason": signal} for signal in qr_analysis.get("risk_signals", [])[:8]]
-        if qr_analysis.get("tamper_check", {}).get("tamper_detected"):
-            signals.insert(0, {
-                "label": "QR tamper check",
-                "reason": qr_analysis["tamper_check"].get("headline") or qr_analysis["tamper_check"].get("change_status", "QR change detected"),
-            })
-        url_checks: list[dict[str, Any]] = []
-        destination = qr_analysis.get("destination_url")
-        if qr_analysis.get("hidden_redirect") and destination not in {"", "Not found"}:
-            url_check = inspect_url(destination)
-            url_checks = [url_check]
-            score = clamp(max(score, url_check["score"]))
-        scam_type = "UPI QR Review" if score < 55 else "UPI QR Fraud Risk"
-        recommendations = [
-            "Verify recipient, merchant, amount, and purpose inside your UPI app before paying.",
-            "Never share OTP, UPI PIN, passwords, or card details.",
-            "Unknown recipient is not verified safe. Confirm payee identity before payment.",
-        ]
-        breakdown = {
-            "language": 0,
-            "urgency": 82 if any(term in (qr_analysis.get("note") or "").lower() for term in PRESSURE_TERMS) else 16,
-            "emotional_manipulation": 0,
-            "pressure": 82 if any(term in (qr_analysis.get("note") or "").lower() for term in PRESSURE_TERMS) else 16,
-            "credential_request": 92 if any("OTP/PIN/password" in signal for signal in qr_analysis.get("risk_signals", [])) else 12,
-        }
-        call_analysis = {"emotion": "Not analyzed", "pressure_score": breakdown["pressure"], "otp_demand": False, "live_warning": score >= 70}
-        rules = {
-            "score": score,
-            "scam_type": scam_type,
-            "signals": signals,
-            "recommendations": recommendations,
-            "urls": [],
-            "breakdown": breakdown,
-            "call_analysis": call_analysis,
-        }
-    else:
-        rules = rule_analysis(request.content, request.channel)
-        qr_analysis = None
-        url_checks = [inspect_url(url) for url in rules["urls"][:3]]
-        if url_checks:
-            rules["score"] = clamp(max(rules["score"], max(item["score"] for item in url_checks)))
+async def analyze(request: AnalyzeRequest, current_user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    rules = rule_analysis(request.content, request.channel)
+    url_checks = [inspect_url(url) for url in rules["urls"][:3]]
+    qr_analysis = inspect_qr_payload(request.content) if request.channel == "qr" or request.content.lower().startswith("upi://") else None
+    if url_checks:
+        rules["score"] = clamp(max(rules["score"], max(item["score"] for item in url_checks)))
+    if qr_analysis:
+        rules["score"] = clamp(max(rules["score"], qr_analysis["score"]))
 
     gemini = await gemini_analysis(request.content, rules, request.language)
     score = rules["score"]
@@ -996,29 +599,16 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
     elif score >= 30:
         risk = "Medium"
 
-    explanation = "The review found risky language, pressure tactics, credential requests, or suspicious link patterns."
-    what_we_found = f"{rules['scam_type']} pattern with {len(rules['signals'])} evidence signals."
-    why_dangerous = "This can push the user into clicking a fake link, sharing private credentials, or authorizing a payment."
-    if qr_analysis:
-        qr_bits = [
-            f"recipient {qr_analysis.get('upi_id')}",
-            f"merchant {qr_analysis.get('merchant')}",
-            f"amount {qr_analysis.get('amount')}",
-            f"note {qr_analysis.get('note')}",
-        ]
-        what_we_found = "QR payment review for " + ", ".join(qr_bits) + "."
-        if qr_analysis.get("risk_signals"):
-            why_dangerous = "Risk signals: " + "; ".join(qr_analysis["risk_signals"][:4]) + "."
-        else:
-            why_dangerous = "Recipient reputation is unknown. Verify the payee inside your UPI app before paying."
+    explanation = (
+        "The review found risky language, pressure tactics, credential requests, "
+        "or suspicious link patterns."
+    )
 
-    confidence = 62 if is_qr and score == 0 else clamp(max(55, min(98, score + 12)))
+    confidence = clamp(max(55, min(98, score + 12)))
     safety_score = 100 - score
-    rule_score = qr_analysis["score"] if qr_analysis else rules["score"]
-    url_score = max([item["score"] for item in url_checks], default=None) if url_checks else None
     reason_breakdown = [
-        {"label": "Message language", "score": rules["breakdown"]["language"], "why": "Checks risky words, fake reward claims, fear tactics, and credential requests." if not is_qr else "QR payload language is reviewed separately from SMS-style keyword rules."},
-        {"label": "Urgency and pressure", "score": rules["breakdown"]["pressure"], "why": "Measures panic, time pressure, threats, and emotional manipulation." if not is_qr else "Payment note pressure terms are reviewed."},
+        {"label": "Message language", "score": rules["breakdown"]["language"], "why": "Checks risky words, fake reward claims, fear tactics, and credential requests."},
+        {"label": "Urgency and pressure", "score": rules["breakdown"]["pressure"], "why": "Measures panic, time pressure, threats, and emotional manipulation."},
         {"label": "Credential risk", "score": rules["breakdown"]["credential_request"], "why": "Looks for OTP, PIN, password, and verification-code requests."},
         {"label": "URL / QR risk", "score": max([item["score"] for item in url_checks] + ([qr_analysis["score"]] if qr_analysis else [0])), "why": "Inspects link structure, brand impersonation, UPI payloads, and suspicious destinations."},
     ]
@@ -1029,13 +619,11 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         "score": score,
         "risk": risk,
         "confidence": confidence,
-        "rule_score": rule_score,
-        "url_score": url_score,
         "safety_score": safety_score,
         "scam_type": rules["scam_type"],
         "explanation": explanation,
-        "what_we_found": what_we_found,
-        "why_dangerous": why_dangerous,
+        "what_we_found": f"{rules['scam_type']} pattern with {len(rules['signals'])} evidence signals.",
+        "why_dangerous": "This can push the user into clicking a fake link, sharing private credentials, or authorizing a payment.",
         "how_sure": f"{confidence}% confidence based on message, link, and behavior checks.",
         "reason_breakdown": reason_breakdown,
         "breakdown": rules["breakdown"],
@@ -1054,45 +642,14 @@ async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
         "confidence": confidence,
         "explanation": result["what_we_found"],
         "reasons": [f"{item['label']}: {item['reason']}" for item in rules["signals"][:6]],
-        "qr_analysis": qr_analysis,
     }
-    tamper = (qr_analysis or {}).get("tamper_check", {})
     result["investigation"] = {
-        "status": "Suspected" if score >= 70 or tamper.get("severity") == "high" else "Needs Review" if score >= 35 or tamper.get("tamper_detected") else "Verified",
-        "note": tamper.get("summary") if tamper.get("tamper_detected") else "",
+        "status": "Suspected" if score >= 70 else "Needs Review" if score >= 35 else "Verified",
+        "note": "",
         "reviewed_by": None,
         "reviewed_at": None,
     }
     return result
-
-
-@app.post("/api/qr/verify")
-def verify_qr(payload: QrVerifyRequest, request: Request) -> dict[str, Any]:
-    user = auth_user(request)
-    qr_analysis = inspect_qr_payload(payload.content)
-    baseline = {
-        **qr_analysis.get("identity", {}),
-        "user_verified": True,
-        "verified_at": datetime.now(timezone.utc).isoformat(),
-        "verified_by": user.get("email"),
-    }
-    case = save_security_case({
-        "case_id": f"BS-{secrets.randbelow(9000) + 1000}",
-        "owner": user["email"],
-        "type": "QR Verified Baseline",
-        "channel": "qr",
-        "input": payload.content,
-        "ai_result": {
-            "risk": "Low",
-            "score": qr_analysis["score"],
-            "confidence": 62,
-            "explanation": "User verified this QR baseline for future tamper comparison.",
-            "reasons": ["User verified QR baseline saved."],
-            "qr_analysis": {**qr_analysis, "user_verified": True, "verified_baseline": baseline},
-        },
-        "investigation": {"status": "Verified", "note": "User verified QR baseline.", "reviewed_by": user.get("name"), "reviewed_at": datetime.now(timezone.utc).isoformat()},
-    })
-    return {"baseline": baseline, "case": case}
 
 
 @app.post("/api/url-check")
@@ -1100,8 +657,3 @@ def url_check(request: UrlCheckRequest) -> dict[str, Any]:
     result = inspect_url(request.url)
     result["risk"] = "High" if result["score"] >= 55 else "Medium" if result["score"] >= 30 else "Low"
     return result
-
-
-DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
-if StaticFiles and DIST_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(DIST_DIR), html=True), name="frontend")
