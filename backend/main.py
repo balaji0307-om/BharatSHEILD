@@ -3,13 +3,17 @@ import re
 import secrets
 import sqlite3
 import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from time import time
 
-import httpx
+try:
+    import httpx
+except ImportError:  # Local QR/unit tests do not need Gemini network calls.
+    httpx = None
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -103,6 +107,39 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS security_cases (
+                case_id TEXT PRIMARY KEY,
+                owner TEXT,
+                type TEXT,
+                channel TEXT,
+                input TEXT,
+                ai_result TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+
+def save_security_case(case: dict[str, Any]) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO security_cases
+            (case_id, owner, type, channel, input, ai_result, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                case.get("case_id") or f"BS-{secrets.randbelow(9000) + 1000}",
+                case.get("owner"),
+                case.get("type"),
+                case.get("channel"),
+                case.get("input"),
+                json.dumps(case.get("ai_result", {}), ensure_ascii=True),
+                case.get("created_at") or datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
 
@@ -307,46 +344,128 @@ def similarity_hint(domain: str) -> dict[str, Any] | None:
 
 
 def inspect_qr_payload(text: str) -> dict[str, Any]:
-    parsed = urlparse(text.strip())
+    raw = text.strip()
+    parsed = urlparse(raw)
     qs = parse_qs(parsed.query)
     amount = qs.get("am", [""])[0]
     upi_id = qs.get("pa", [""])[0]
     merchant = qs.get("pn", [""])[0]
-    notes = qs.get("tn", [""])[0]
-    checks = []
-    score = 10
+    note = qs.get("tn", [""])[0]
+    destination_url = qs.get("url", qs.get("link", qs.get("redirect", [""])))[0]
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        destination_url = raw
+
+    qr_fingerprint = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16].upper()
+    risk_signals: list[str] = []
+    checks: list[dict[str, str]] = []
+    score = 8 if parsed.scheme == "upi" else 18
+
+    suspicious_terms = ("fake", "refund", "support", "verify", "kyc", "helpdesk", "customer")
+    pressure_terms = ("kyc", "refund", "verify", "verification", "urgent", "blocked", "immediately", "support")
+    secret_terms = ("otp", "pin", "password", "passcode")
+    upi_valid = bool(re.fullmatch(r"[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9]{2,}", upi_id or ""))
+    malformed_provider = bool(upi_id) and not upi_valid
 
     if parsed.scheme == "upi":
         checks.append({"label": "UPI payload", "result": "Payment intent detected"})
-        score += 18
     if upi_id:
-        checks.append({"label": "UPI ID", "result": upi_id})
-        if any(word in upi_id.lower() for word in ("fake", "refund", "support", "verify")):
-            score += 20
+        checks.append({"label": "Recipient", "result": upi_id})
+    else:
+        score += 18
+        risk_signals.append("Recipient missing from QR payload")
+
+    previous_reports = 0
+    if upi_id or qr_fingerprint:
+        try:
+            with get_db() as conn:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM security_cases
+                    WHERE channel = 'qr'
+                      AND (
+                        input = ?
+                        OR input LIKE ?
+                        OR ai_result LIKE ?
+                        OR ai_result LIKE ?
+                      )
+                    """,
+                    (raw, f"%{upi_id}%" if upi_id else "__never__", f"%{upi_id}%" if upi_id else "__never__", f"%{qr_fingerprint}%"),
+                ).fetchone()
+            previous_reports = int(row["count"] if row else 0)
+        except sqlite3.Error:
+            previous_reports = 0
+
+    recipient_reputation = "Unknown"
+    if previous_reports > 0:
+        recipient_reputation = "Suspicious"
+        score += 26
+        risk_signals.append("Recipient or QR fingerprint matches a previous BharatSHIELD case")
+    if upi_id and any(term in upi_id.lower() for term in suspicious_terms):
+        recipient_reputation = "Suspicious"
+        score += 28
+        risk_signals.append("Recipient name contains support/refund/KYC terms")
+    if malformed_provider:
+        recipient_reputation = "Suspicious"
+        score += 22
+        risk_signals.append("UPI provider handle is malformed or unusual")
+
     if amount:
         checks.append({"label": "Amount", "result": f"INR {amount}"})
-        score += 12
+        try:
+            amount_value = float(amount)
+            if amount_value >= 10000:
+                score += 18
+                risk_signals.append("Unusually high payment amount")
+            elif amount_value >= 3000:
+                score += 12
+                risk_signals.append("Moderate payment amount needs review")
+        except ValueError:
+            score += 10
+            risk_signals.append("Amount field is malformed")
     if merchant:
-        checks.append({"label": "Merchant name", "result": merchant})
-    if notes:
-        checks.append({"label": "Payment note", "result": notes})
-        if any(word in notes.lower() for word in ("kyc", "refund", "verify")):
-            score += 14
+        checks.append({"label": "Merchant", "result": merchant})
+        if any(term in merchant.lower() for term in suspicious_terms):
+            score += 20
+            risk_signals.append("Merchant name uses refund/support/KYC terms")
+    if note:
+        checks.append({"label": "Payment note", "result": note})
+        if any(term in note.lower() for term in pressure_terms):
+            score += 24
+            risk_signals.append("Payment note contains pressure or verification terms")
+        if any(term in note.lower() for term in secret_terms):
+            score += 30
+            risk_signals.append("Payment note references OTP/PIN/password")
+    if destination_url:
+        url_result = inspect_url(destination_url)
+        checks.append({"label": "Destination URL", "result": destination_url})
+        if url_result["score"] >= 30:
+            score += min(35, url_result["score"])
+            risk_signals.append("QR contains a suspicious destination URL")
 
-    if not checks:
-        checks.append({"label": "QR content", "result": "No UPI/payment fields detected"})
+    if not risk_signals:
+        risk_signals.append("No high-risk QR signal found; recipient remains unknown and not verified safe")
 
     # Build identity record for richer analysis
-    identity = build_identity_record(upi_id, merchant, amount, notes)
+    identity = build_identity_record(upi_id, merchant, amount, note)
     tamper = compare_identity(identity, None)  # No server-side baseline
     identity_check = build_identity_check(identity, tamper)
 
     return {
         "score": clamp(score),
         "upi_id": upi_id or "Not found",
+        "recipient": upi_id or "Not found",
         "merchant": merchant or "Not found",
         "amount": amount or "Not found",
-        "hidden_redirect": parsed.scheme in {"http", "https"} and bool(parsed.netloc),
+        "note": note or "Not found",
+        "payment_note": note or "Not found",
+        "destination_url": destination_url or "Not found",
+        "hidden_redirect": bool(destination_url),
+        "recipient_reputation": recipient_reputation,
+        "recipient_reputation_label": f"{recipient_reputation} - not verified safe" if recipient_reputation == "Unknown" else recipient_reputation,
+        "previous_reports": previous_reports,
+        "qr_fingerprint": qr_fingerprint,
+        "risk_signals": risk_signals,
         "checks": checks,
         "identity": identity,
         "identity_check": identity_check,
@@ -522,7 +641,7 @@ def inspect_url(raw_url: str) -> dict[str, Any]:
 
 async def gemini_analysis(text: str, rule_result: dict[str, Any], language: str) -> dict[str, Any] | None:
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    if not api_key or httpx is None:
         return None
 
     prompt = f"""

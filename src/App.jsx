@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
+import { buildMetricDisplay } from "./displayMetrics.mjs";
 import useReducedMotion from "./hooks/useReducedMotion";
 import useDeviceCapability from "./hooks/useDeviceCapability";
 
@@ -318,6 +319,7 @@ export default function App() {
   const [mode, setMode] = useState("whatsapp");
   const [content, setContent] = useState(samples.whatsapp);
   const [result, setResult] = useState(null);
+  const [activeAnalysisMode, setActiveAnalysisMode] = useState(null);
   const [history, setHistory] = useState(getStoredHistory);
   const [cases, setCases] = useState(getStoredCases);
   const [loading, setLoading] = useState(false);
@@ -349,11 +351,24 @@ export default function App() {
   const show3D = !isLowEnd && !isMobile;
 
   // scanSteps is declared outside the component to avoid re-creation on every render.
-  const score = result?.score || 0;
-  const confidence = result?.confidence || (result ? Math.min(99, result.score + 5) : 96);
-  const ruleScore = result ? Math.max(14, result.score - 2) : 89;
-  const urlScore = result?.url_checks?.length ? Math.max(...result.url_checks.map((item) => item.score)) : result ? Math.max(30, result.score - 7) : 95;
-  const safetyScore = result?.safety_score ?? 76;
+  const displayResult = result?.mode === mode ? result : null;
+  const isAnalyzingCurrentMode = loading && activeAnalysisMode === mode;
+  const isQrResult = displayResult?.mode === "qr" || Boolean(displayResult?.qr_analysis);
+  const isQrPanel = mode === "qr" || activeAnalysisMode === "qr" || isQrResult;
+  const metricDisplay = buildMetricDisplay({ displayResult, mode, activeAnalysisMode, loading });
+  const score = metricDisplay.scoreValue ?? 0;
+  const gaugeScore = metricDisplay.gaugeScore;
+  const scoreDisplay = metricDisplay.scoreDisplay;
+  const confidenceDisplay = metricDisplay.confidenceDisplay;
+  const ruleScoreDisplay = metricDisplay.ruleScoreDisplay;
+  const urlScoreDisplay = metricDisplay.urlScoreDisplay;
+  const safetyScoreDisplay = metricDisplay.safetyScoreDisplay;
+  const liveShieldStatus = metricDisplay.liveShieldStatus;
+  const threatCardTitle = isQrPanel ? "QR Risk Analysis" : "Threat Level";
+  const riskLevelDisplay = isAnalyzingCurrentMode ? "Analyzing" : displayResult?.risk || threatCardTitle;
+  const gaugeRiskClass = metricDisplay.scoreValue === null && displayResult ? "medium" : riskColor(score);
+  const confidence = Number.isFinite(Number(displayResult?.confidence)) ? Number(displayResult.confidence) : 0;
+  const dashboardSafetyScore = Number.isFinite(Number(displayResult?.safety_score)) ? Number(displayResult.safety_score) : 76;
   const incidentId = useMemo(() => `BS-${Math.floor(20000 + Math.random() * 70000)}`, [result?.created_at]);
 
   useEffect(() => {
@@ -429,6 +444,8 @@ export default function App() {
   async function runAnalysis(input = content, channel = mode) {
     if (!input.trim()) return;
     playScanSound();
+    setActiveAnalysisMode(channel);
+    setResult(null);
     setLoading(true);
     setError("");
     setShowLanding(false);
@@ -447,9 +464,10 @@ export default function App() {
         throw new Error("Your session expired. Please login again.");
       }
       if (!response.ok) throw new Error(data.detail || "Analysis service is unavailable. Please try again.");
-      setResult(data);
-      const nextHistory = [{ ...data, mode: channel, preview: input.slice(0, 120) }, ...history];
-      const nextCases = [buildSecurityCase(data, input, channel, session?.user), ...cases];
+      const currentResult = { ...data, mode: data.mode || channel };
+      setResult(currentResult);
+      const nextHistory = [{ ...currentResult, preview: input.slice(0, 120) }, ...history];
+      const nextCases = [buildSecurityCase(currentResult, input, channel, session?.user), ...cases];
       setHistory(nextHistory);
       saveHistory(nextHistory);
       setCases(nextCases);
@@ -457,7 +475,10 @@ export default function App() {
     } catch (err) {
       setError(err.message || "Analysis failed. Please try again.");
     } finally {
-      setTimeout(() => setLoading(false), 420);
+      setTimeout(() => {
+        setLoading(false);
+        setActiveAnalysisMode(null);
+      }, 420);
     }
   }
 
@@ -648,8 +669,8 @@ export default function App() {
     const text = [
       "BharatSHIELD Complaint Draft",
       `Report Type: ${reportType}`,
-      `Risk: ${result?.risk || "Pending scan"}`,
-      `Score: ${score}%`,
+      `Risk: ${displayResult?.risk || "Pending scan"}`,
+      `Score: ${scoreDisplay}`,
       `Summary: ${complaintSummary}`,
       "Recommended Actions:",
       ...recommendations.map((item) => `- ${item}`),
@@ -716,7 +737,7 @@ export default function App() {
     }
   }
 
-  const recommendations = result?.recommendations || [
+  const recommendations = displayResult?.recommendations || [
     "Do not click unknown links or open unexpected attachments.",
     "Never share OTP, UPI PIN, passwords, or card details.",
     "Verify through the official app or website by typing the address yourself.",
@@ -727,7 +748,7 @@ export default function App() {
   const isUrlMode = mode === "url";
   const isTextMode = !isQrMode && !isCallMode && !isUrlMode;
   const analyzeLabel = isQrMode ? "Analyze QR" : isCallMode ? "Analyze Call" : isUrlMode ? "Analyze Website" : "Analyze Threat";
-  const complaintSummary = result ? `${result.scam_type} suspected with ${score}% risk. Evidence: ${content.slice(0, 180)}` : "Select a report type and add evidence to prepare a complaint summary.";
+  const complaintSummary = displayResult ? `${displayResult.scam_type} suspected with ${scoreDisplay} risk. Evidence: ${content.slice(0, 180)}` : "Select a report type and add evidence to prepare a complaint summary.";
 
   return (
     <>
@@ -989,7 +1010,7 @@ export default function App() {
           </header>
 
           <section className={activeSection === "Dashboard" ? "stat-strip" : "stat-strip section-hidden"}>
-            <div><span>Safety Score</span><strong>{safetyScore}</strong><small>Higher is safer</small></div>
+            <div><span>Safety Score</span><strong>{dashboardSafetyScore}</strong><small>Higher is safer</small></div>
             <div><span>Money Protected</span><strong>INR 11,158 Cr</strong><small>Latest public update</small></div>
             <div><span>Weekly Risk Trend</span><strong>{score >= 70 ? "Rising" : "Stable"}</strong><small>Based on scan history</small></div>
             <div><span>Latest Scam Alert</span><strong>Digital Arrest</strong><small>High priority</small></div>
@@ -1180,10 +1201,10 @@ export default function App() {
                 </div>
                 <div className="glass">
                   <h2>What We Found</h2>
-                  <p>{result ? result.what_we_found : "Run a scan to review links, urgency, sender intent, and credential risk."}</p>
+                  <p>{displayResult ? displayResult.what_we_found : "Run a scan to review links, urgency, sender intent, and credential risk."}</p>
                   <div className="simple-box">
                     <strong>Why It Is Dangerous</strong>
-                    <p>{result?.why_dangerous || "Verify payment, bank, and account alerts only through official apps."}</p>
+                    <p>{displayResult?.why_dangerous || "Verify payment, bank, and account alerts only through official apps."}</p>
                   </div>
                 </div>
                 <div className="glass">
@@ -1202,22 +1223,22 @@ export default function App() {
                       style={{ position: 'relative', width: '100%', height: '280px', pointerEvents: 'auto' }}
                     >
                       {loading ? (
-                        <ThreatScanner active={loading} score={score} reducedMotion={reducedMotion} />
-                      ) : mode === "qr" && result?.qr_analysis ? (
+                        <ThreatScanner active={loading} score={gaugeScore} reducedMotion={reducedMotion} />
+                      ) : mode === "qr" && displayResult?.qr_analysis ? (
                         <QRHologram
                           qrData={{
-                            upi_id: result.qr_analysis.upi_id || "",
-                            merchant: result.qr_analysis.merchant || "",
-                            amount: result.qr_analysis.amount || "",
-                            note: result.qr_analysis.note || "",
-                            tamper_detected: result.qr_analysis.identity_check?.tamper_detected || false,
+                            upi_id: displayResult.qr_analysis.upi_id || "",
+                            merchant: displayResult.qr_analysis.merchant || "",
+                            amount: displayResult.qr_analysis.amount || "",
+                            note: displayResult.qr_analysis.note || "",
+                            tamper_detected: displayResult.qr_analysis.identity_check?.tamper_detected || false,
                           }}
                           reducedMotion={reducedMotion}
                         />
                       ) : (
                         <ScanGauge3D
-                          score={score}
-                          risk={result?.risk || "Monitoring"}
+                          score={gaugeScore}
+                          risk={riskLevelDisplay}
                           confidence={confidence}
                           reducedMotion={reducedMotion}
                         />
@@ -1228,32 +1249,33 @@ export default function App() {
                   <div className="orbit-core">
                     <HeroShield />
                     <strong>Live Shield</strong>
-                    <span>{result ? `${score}% threat detected` : "Monitoring"}</span>
+                    <span>{displayResult || isAnalyzingCurrentMode ? liveShieldStatus : "Monitoring"}</span>
                   </div>
                 )}
               </section>
 
               <section className="glass result-focus">
-                <div className={`gauge ${riskColor(score)}`} style={{ "--score": score || 18 }}>
+                <h2>{threatCardTitle}</h2>
+                <div className={`gauge ${gaugeRiskClass}`} style={{ "--score": gaugeScore || 18 }}>
                   <div className="gauge-core">
-                    <strong>{score}%</strong>
-                    <span>{result?.risk || "Threat Level"}</span>
+                    <strong>{scoreDisplay}</strong>
+                    <span>{riskLevelDisplay}</span>
                   </div>
                 </div>
                 <div className="score-stack">
-                  <div><span>Confidence</span><strong>{confidence}%</strong></div>
-                  <div><span>Rule Engine</span><strong>{ruleScore}%</strong></div>
-                  <div><span>URL Analysis</span><strong>{urlScore}%</strong></div>
-                  <div><span>Safety Score</span><strong>{safetyScore}</strong></div>
+                  <div><span>Confidence</span><strong>{confidenceDisplay}</strong></div>
+                  <div><span>Rule Engine</span><strong>{ruleScoreDisplay}</strong></div>
+                  <div><span>URL Analysis</span><strong>{urlScoreDisplay}</strong></div>
+                  <div><span>Safety Score</span><strong>{safetyScoreDisplay}</strong></div>
                 </div>
               </section>
 
               <section className="glass ai-card">
                 <h2>BharatSHIELD Review</h2>
-                <p className="typing">{result ? result.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
-                <ol>{(result?.signals?.length ? result.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
-                <div className={`safety-seal ${riskColor(score)}`}>
-                  <strong>{score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
+                <p className="typing">{isAnalyzingCurrentMode ? "Analyzing current QR payload..." : displayResult ? displayResult.how_sure : "Checks tone, links, urgency, identity clues, and safety actions."}</p>
+                <ol>{(displayResult?.signals?.length ? displayResult.signals.slice(0, 5).map((item) => `${item.label}: ${item.reason}`) : scanSteps.slice(0, 5)).map((item) => <li key={item}>{item}</li>)}</ol>
+                <div className={`safety-seal ${gaugeRiskClass}`}>
+                  <strong>{isAnalyzingCurrentMode ? "Analyzing" : displayResult?.verification_failed ? "Review Required" : score >= 75 ? "Dangerous" : score >= 45 ? "Suspicious" : "Safe"}</strong>
                   <span>Verified by BharatSHIELD</span>
                 </div>
               </section>
@@ -1264,7 +1286,7 @@ export default function App() {
             <div className="glass">
               <h2>Reason Breakdown</h2>
               <div className="reason-list">
-                {(result?.reason_breakdown || [
+                {(displayResult?.reason_breakdown || [
                   { label: "Message language", score: 0, why: "Waiting for scan." },
                   { label: "Urgency and pressure", score: 0, why: "Waiting for scan." },
                   { label: "Credential risk", score: 0, why: "Waiting for scan." },
@@ -1282,7 +1304,7 @@ export default function App() {
             <div className="glass">
               <h2>URL Intelligence</h2>
               <div className="intel-list">
-                {(result?.url_checks?.length ? result.url_checks : [{ domain: "No URL scanned", score: 0, checks: [{ label: "Status", result: "Paste or scan a URL to inspect domain reputation." }] }]).flatMap((url) => [
+                {(displayResult?.url_checks?.length ? displayResult.url_checks : [{ domain: "No URL scanned", score: 0, checks: [{ label: "Status", result: "Paste or scan a URL to inspect domain reputation." }] }]).flatMap((url) => [
                   <div key={`${url.domain}-score`}><span>{url.domain}</span><strong>{url.score}% risk</strong></div>,
                   ...(url.checks || []).slice(0, 5).map((check) => <div key={`${url.domain}-${check.label}`}><span>{check.label}</span><strong>{check.result}</strong></div>),
                   url.domain_age ? <div key={`${url.domain}-age`}><span>Domain age</span><strong>{url.domain_age}</strong></div> : null,
@@ -1294,12 +1316,12 @@ export default function App() {
             <div className="glass">
               <h2>QR / Call Deep Check</h2>
               <div className="intel-list">
-                <div><span>UPI ID</span><strong>{result?.qr_analysis?.upi_id || "Not found"}</strong></div>
-                <div><span>Merchant</span><strong>{result?.qr_analysis?.merchant || "Not found"}</strong></div>
-                <div><span>Amount</span><strong>{result?.qr_analysis?.amount || "Not found"}</strong></div>
-                <div><span>Voice emotion</span><strong>{result?.call_analysis?.emotion || "Not analyzed"}</strong></div>
-                <div><span>Pressure score</span><strong>{result?.call_analysis?.pressure_score ?? 0}%</strong></div>
-                <div><span>Live warning</span><strong>{result?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>
+                <div><span>UPI ID</span><strong>{displayResult?.qr_analysis?.upi_id || "Not found"}</strong></div>
+                <div><span>Merchant</span><strong>{displayResult?.qr_analysis?.merchant || "Not found"}</strong></div>
+                <div><span>Amount</span><strong>{displayResult?.qr_analysis?.amount || "Not found"}</strong></div>
+                <div><span>Voice emotion</span><strong>{displayResult?.call_analysis?.emotion || "Not analyzed"}</strong></div>
+                <div><span>Pressure score</span><strong>{displayResult?.call_analysis?.pressure_score == null ? "N/A" : `${displayResult.call_analysis.pressure_score}%`}</strong></div>
+                <div><span>Live warning</span><strong>{displayResult?.call_analysis?.live_warning ? "Disconnect immediately" : "No urgent warning"}</strong></div>
               </div>
             </div>
           </section>
@@ -1307,7 +1329,7 @@ export default function App() {
           <section className={activeSection === "Dashboard" ? "intel-grid" : "intel-grid section-hidden"}>
             <div className="glass">
               <h2>Today&apos;s Threat Level</h2>
-              <strong className="big-status">{result?.risk || "Medium"}</strong>
+              <strong className="big-status">{displayResult?.risk || "Medium"}</strong>
               <p>Be cautious and stay alert.</p>
             </div>
             <div className="glass">
@@ -1637,9 +1659,9 @@ export default function App() {
             <h2>BharatSHIELD Cyber Incident Report</h2>
             <div className="report-grid">
               <div><span>Incident ID</span><strong>{incidentId}</strong></div>
-              <div><span>Threat</span><strong>{result?.scam_type || "No scan yet"}</strong></div>
-              <div><span>Risk</span><strong>{score}%</strong></div>
-              <div><span>Confidence</span><strong>{confidence}%</strong></div>
+              <div><span>Threat</span><strong>{displayResult?.scam_type || "No scan yet"}</strong></div>
+              <div><span>Risk</span><strong>{scoreDisplay}</strong></div>
+              <div><span>Confidence</span><strong>{confidenceDisplay}</strong></div>
             </div>
             <h3>Evidence</h3>
             <p>{content}</p>

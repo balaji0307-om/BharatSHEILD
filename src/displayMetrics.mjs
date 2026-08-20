@@ -35,10 +35,10 @@ export function buildMetricDisplay({ displayResult, mode, activeAnalysisMode, lo
       scoreValue: 0,
       gaugeScore: 18,
       scoreDisplay: "0%",
-      confidenceDisplay: "Not applicable",
-      ruleScoreDisplay: "Not applicable",
-      urlScoreDisplay: "Not applicable",
-      safetyScoreDisplay: "Not applicable",
+      confidenceDisplay: "N/A",
+      ruleScoreDisplay: "N/A",
+      urlScoreDisplay: "N/A",
+      safetyScoreDisplay: "N/A",
       liveShieldStatus: "Monitoring",
     };
   }
@@ -53,22 +53,22 @@ export function buildMetricDisplay({ displayResult, mode, activeAnalysisMode, lo
   const hasQrDestination = displayResult.qr_analysis?.hidden_redirect === true
     || (typeof destinationUrl === "string" && destinationUrl !== "Not found" && destinationUrl.length > 0);
 
-  const scoreDisplay = scoreValue === null ? "Unable" : formatPercent(scoreValue);
-  const confidenceDisplay = formatPercent(displayResult.confidence, "Not applicable");
+  const scoreDisplay = scoreValue === null ? "N/A" : formatPercent(scoreValue);
+  const confidenceDisplay = formatPercent(displayResult.confidence);
   const ruleScoreDisplay = ruleValue !== null
     ? formatPercent(ruleValue)
     : isQrResult
-      ? "Not applicable"
+      ? "N/A"
       : scoreValue !== null
         ? `${Math.max(14, scoreValue - 2)}%`
-        : "Not applicable";
+        : "N/A";
   const urlScoreDisplay = urlValue !== null
     ? formatPercent(urlValue)
     : hasUrlChecks
       ? formatPercent(Math.max(...displayResult.url_checks.map((item) => numericValue(item.score) ?? 0)))
       : isQrResult && !hasQrDestination
         ? "Not applicable"
-        : "Not applicable";
+        : "N/A";
 
   return {
     scoreValue,
@@ -77,7 +77,7 @@ export function buildMetricDisplay({ displayResult, mode, activeAnalysisMode, lo
     confidenceDisplay,
     ruleScoreDisplay,
     urlScoreDisplay,
-    safetyScoreDisplay: safetyValue === null ? "Not applicable" : formatMetric(safetyValue),
+    safetyScoreDisplay: formatMetric(safetyValue),
     liveShieldStatus: scoreValue === null ? "Risk unavailable" : `${scoreDisplay} threat detected`,
   };
 }

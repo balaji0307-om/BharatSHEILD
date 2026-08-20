@@ -1,9 +1,63 @@
 import unittest
 from pathlib import Path
 import sys
+import types
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+try:
+    import fastapi  # noqa: F401
+except ImportError:
+    fastapi_module = types.ModuleType("fastapi")
+
+    class _FastAPI:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_middleware(self, *args, **kwargs):
+            pass
+
+        def middleware(self, *args, **kwargs):
+            return lambda func: func
+
+        def get(self, *args, **kwargs):
+            return lambda func: func
+
+        def post(self, *args, **kwargs):
+            return lambda func: func
+
+    class _HTTPException(Exception):
+        def __init__(self, status_code=500, detail=""):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+    fastapi_module.FastAPI = _FastAPI
+    fastapi_module.Depends = lambda dependency=None: dependency
+    fastapi_module.Header = lambda default=None: default
+    fastapi_module.HTTPException = _HTTPException
+    fastapi_module.Request = object
+    sys.modules["fastapi"] = fastapi_module
+
+    responses_module = types.ModuleType("fastapi.responses")
+    responses_module.JSONResponse = lambda *args, **kwargs: {"args": args, "kwargs": kwargs}
+    sys.modules["fastapi.responses"] = responses_module
+
+    middleware_module = types.ModuleType("fastapi.middleware")
+    cors_module = types.ModuleType("fastapi.middleware.cors")
+    cors_module.CORSMiddleware = object
+    sys.modules["fastapi.middleware"] = middleware_module
+    sys.modules["fastapi.middleware.cors"] = cors_module
+
+try:
+    import pydantic  # noqa: F401
+except ImportError:
+    pydantic_module = types.ModuleType("pydantic")
+    pydantic_module.BaseModel = object
+    pydantic_module.Field = lambda default=None, **kwargs: default
+    sys.modules["pydantic"] = pydantic_module
+
 import main
 
 
